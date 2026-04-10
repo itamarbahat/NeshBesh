@@ -1,0 +1,29 @@
+body {
+  direction: rtl;
+  text-align: right;
+}
+
+/* Keep code blocks LTR */
+pre, code, .hljs {
+  direction: ltr;
+  text-align: left;
+}
+
+/* Tables: header right-aligned, cells right-aligned */
+th, td {
+  text-align: right;
+}
+
+/* Lists: proper RTL bullet/number placement */
+ul, ol {
+  padding-right: 2em;
+  padding-left: 0;
+}
+
+/* Blockquotes: border on right side */
+blockquote {
+  border-left: none;
+  border-right: 4px solid #ddd;
+  padding-right: 1em;
+  padding-left: 0;
+}

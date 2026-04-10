@@ -1,0 +1,7 @@
+{
+  "editor.wordWrap": "on",
+  "editor.minimap.enabled": false,
+  "markdown.preview.styles": [
+    "./.vscode/rtl-preview.css"
+  ]
+}
