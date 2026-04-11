@@ -10,6 +10,20 @@ import {
   BEAR_OFF_WHITE, BEAR_OFF_BLACK,
 } from '../engine';
 
+// Public helper: does the current game state have any legal move left for the
+// active player with the current remaining dice? Used to drive the intelligent
+// End Turn button visibility.
+export const currentPlayerHasLegalMoves = (state: {
+  board: number[];
+  currentPlayer: PlayerSign;
+  availableDice: number[];
+  backward: boolean;
+}): boolean => {
+  if (state.availableDice.length === 0) return false;
+  const bo = canBearOff(state.board, state.currentPlayer);
+  return hasAnyMove(state.board, state.currentPlayer, state.availableDice, state.backward, bo);
+};
+
 export interface NeshBeshState {
   // Board
   board: number[];
@@ -42,7 +56,14 @@ export interface NeshBeshState {
   // Toast message for UI
   message: string | null;
 
+  // Opening roll (INITIAL_ROLL phase) — each player rolls one die; higher
+  // starts the game with both values as their opening move; tie triggers
+  // a re-roll.
+  openingWhiteDie: number | null;
+  openingBlackDie: number | null;
+
   // Actions
+  rollOpeningDie: (sign: PlayerSign) => void;
   rollDice: () => void;
   rollSingleDie: () => void;
   handlePointPress: (index: number) => void;
@@ -196,9 +217,11 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     whiteBorneOff: 0,
     blackBorneOff: 0,
     currentPlayer: 1,
-    phase: 'WAITING_ROLL',
+    phase: 'INITIAL_ROLL',
     dice: null,
     availableDice: [],
+    openingWhiteDie: null,
+    openingBlackDie: null,
     doublesCount: 0,
     extraTurn: false,
     backward: false,
@@ -211,6 +234,34 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     score: initialScore,
     victoryInfo: null,
     message: null,
+
+    // ── rollOpeningDie (INITIAL_ROLL — single-device hotseat) ─────────────────
+    rollOpeningDie: (sign: PlayerSign) => {
+      const { phase, openingWhiteDie, openingBlackDie } = get();
+      if (phase !== 'INITIAL_ROLL') return;
+      if (sign === 1 && openingWhiteDie != null) return;
+      if (sign === -1 && openingBlackDie != null) return;
+
+      const d = rollDie();
+      const newWhite = sign === 1 ? d : openingWhiteDie;
+      const newBlack = sign === -1 ? d : openingBlackDie;
+      set({ openingWhiteDie: newWhite, openingBlackDie: newBlack });
+
+      if (newWhite != null && newBlack != null) {
+        if (newWhite === newBlack) {
+          // Tie — re-roll both after a brief pause (caller handles UI timing).
+          setTimeout(() => {
+            set({ openingWhiteDie: null, openingBlackDie: null });
+          }, 900);
+          return;
+        }
+        // Resolve to game start: winner plays both dice as opening move.
+        const firstPlayer: PlayerSign = newWhite > newBlack ? 1 : -1;
+        setTimeout(() => {
+          get().startWithDice(firstPlayer, newWhite, newBlack);
+        }, 900);
+      }
+    },
 
     // ── rollDice ──────────────────────────────────────────────────────────────
     rollDice: () => {
@@ -400,6 +451,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       // «Touched-Moved» enforcement: if the move is locked, ignore deselect/re-select
       // Once the player taps a highlighted destination, the move cannot be undone.
 
+      // Integrated bear-off: re-tapping the selected piece triggers the
+      // bear-off move directly when bear-off is in its final set.
+      const bearOffSentinel = sign === 1 ? BEAR_OFF_WHITE : BEAR_OFF_BLACK;
+      if (index === selectedIndex && finalHighlights.includes(bearOffSentinel)) {
+        // Redirect through the same click-2 branch but with the sentinel target.
+        return get().handlePointPress(bearOffSentinel);
+      }
+
       // Deselect (only allowed if not locked)
       if (index === selectedIndex && !moveLocked) {
         set({ selectedIndex: null, intermediateHighlights: [], finalHighlights: [], moveLocked: false });
@@ -521,19 +580,26 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         doublesCount: 0,
         score: initialScore,
         victoryInfo: null,
+        openingWhiteDie: null,
+        openingBlackDie: null,
         ...resetTurnState(1),
+        phase: 'INITIAL_ROLL',
       });
     },
 
-    // ── startWithDice (multiplayer initial roll) ──────────────────────────────
+    // ── startWithDice (opening roll resolved) ─────────────────────────────────
+    // Winner of the opening die-roll plays both dice as their first move.
     startWithDice: (firstPlayer: PlayerSign, d1: number, d2: number) => {
+      const { score } = get();
       set({
         board: generateInitialBoard(),
         whiteBorneOff: 0,
         blackBorneOff: 0,
         doublesCount: 0,
-        score: initialScore,
+        score,
         victoryInfo: null,
+        openingWhiteDie: null,
+        openingBlackDie: null,
         ...resetTurnState(firstPlayer),
       });
 

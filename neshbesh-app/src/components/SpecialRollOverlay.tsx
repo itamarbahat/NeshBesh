@@ -17,8 +17,7 @@ import { generateInitialBoard } from '../engine';
 export const SpecialRollOverlay: React.FC = () => {
   const state = useGameStore();
   const {
-    phase, score, victoryInfo,
-    choose63,
+    phase, score, victoryInfo, currentPlayer,
     confirmTableFlip, startNewGame,
   } = state;
 
@@ -28,19 +27,26 @@ export const SpecialRollOverlay: React.FC = () => {
 
   if (!visible) return null;
 
+  // Mirror card toward the active player: White (top) reads inverted.
+  const mirroredCardStyle = currentPlayer === 1 ? { transform: [{ rotate: '180deg' as const }] } : undefined;
+
   const startNextGame = () => {
+    // Each new game within the tournament re-runs the opening roll.
     useGameStore.setState({
       board: generateInitialBoard(),
       whiteBorneOff: 0,
       blackBorneOff: 0,
       victoryInfo: null,
-      currentPlayer: state.currentPlayer === 1 ? -1 : 1,
-      phase: 'WAITING_ROLL',
+      currentPlayer: 1,
+      phase: 'INITIAL_ROLL',
       dice: null,
       availableDice: [],
+      openingWhiteDie: null,
+      openingBlackDie: null,
       doublesCount: 0,
       extraTurn: false,
       backward: false,
+      pending52Flip: false,
       selectedIndex: null,
       intermediateHighlights: [],
       finalHighlights: [],
@@ -55,7 +61,7 @@ export const SpecialRollOverlay: React.FC = () => {
   return (
     <Modal transparent animationType="fade" visible={visible}>
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        <View style={[styles.card, mirroredCardStyle]}>
 
           {phase === 'TABLE_FLIP' && (
             <>

@@ -15,7 +15,7 @@ import ReanimatedView from 'react-native-reanimated';
 import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
 import { Trophy, X, Info } from 'lucide-react-native';
-import { useGameStore } from './src/store/useGameStore';
+import { useGameStore, currentPlayerHasLegalMoves } from './src/store/useGameStore';
 import { useMultiplayerStore } from './src/store/useMultiplayerStore';
 import { LobbyScreen } from './src/screens/LobbyScreen';
 import {
@@ -23,7 +23,7 @@ import {
   subscribeToGameState, sendGuestAction, clearInitialDice,
 } from './src/services/multiplayerService';
 import { Board, BOARD_ASPECT } from './src/components/Board';
-import { BEAR_OFF_WHITE, BEAR_OFF_BLACK } from './src/engine';
+import { BOARD_FROZEN } from './src/components/boardConstants';
 import { DicePanel, DieFace } from './src/components/DicePanel';
 import { DoubleChooserPanel } from './src/components/DoubleChooserPanel';
 import { SpecialRollOverlay } from './src/components/SpecialRollOverlay';
@@ -96,7 +96,7 @@ const SpecialRollCard: React.FC<{
   onConfirmSpecial?: () => void;
 }> = ({ onAcknowledgeSkip, onChoose63, onChooseDouble, onConfirmSpecial }) => {
   const {
-    phase, message,
+    phase, message, currentPlayer,
     acknowledgeSkip, choose63, chooseDouble, confirmSpecialResult,
   } = useGameStore();
 
@@ -105,9 +105,12 @@ const SpecialRollCard: React.FC<{
   const chDbl = onChooseDouble || chooseDouble;
   const cfm = onConfirmSpecial || confirmSpecialResult;
 
+  // Mirror system alerts toward the active player: White (top) reads inverted.
+  const mirroredStyle = currentPlayer === 1 ? { transform: [{ rotate: '180deg' as const }] } : undefined;
+
   if (phase === 'SPECIAL_CHOOSE_DOUBLE') {
     return (
-      <View style={styles.specialCardWrapper}>
+      <View style={[styles.specialCardWrapper, mirroredStyle]}>
         <DoubleChooserPanel onChoose={chDbl} />
       </View>
     );
@@ -115,7 +118,7 @@ const SpecialRollCard: React.FC<{
 
   if (phase === 'SPECIAL_63_CHOICE') {
     return (
-      <View style={styles.specialCardWrapper}>
+      <View style={[styles.specialCardWrapper, mirroredStyle]}>
         <ChoiceOverlay63 onChoice={ch63} />
       </View>
     );
@@ -123,7 +126,7 @@ const SpecialRollCard: React.FC<{
 
   if (phase === 'SKIP') {
     return (
-      <View style={styles.specialCardWrapper}>
+      <View style={[styles.specialCardWrapper, mirroredStyle]}>
         <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.specialCard}>
           <View style={styles.specialCardRow}>
             <Text style={styles.specialCardTitle}>{message || 'תור עובר!'}</Text>
@@ -136,7 +139,7 @@ const SpecialRollCard: React.FC<{
 
   if (phase === 'SPECIAL_43_RESULT' || phase === 'SPECIAL_51_RESULT') {
     return (
-      <View style={styles.specialCardWrapper}>
+      <View style={[styles.specialCardWrapper, mirroredStyle]}>
         <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.specialCard}>
           <View style={styles.specialCardRow}>
             <Text style={styles.specialCardTitle}>{message}</Text>
@@ -265,12 +268,18 @@ const CenteredDiceBar: React.FC<{
   handleRoll: (v: number) => void;
   isSingleDiePhase: boolean;
   endTurnOverride?: () => void;
-}> = ({ getStatusText, handleRoll, isSingleDiePhase, endTurnOverride }) => {
+  dieSize: number;
+}> = ({ getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize }) => {
   const {
-    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice, endTurn,
+    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice,
+    board, backward, endTurn,
   } = useGameStore();
   const end = endTurnOverride || endTurn;
   const isWhiteTurn = currentPlayer === 1;
+
+  const noLegalMoves = phase === 'MOVING'
+    && availableDice.length > 0
+    && !currentPlayerHasLegalMoves({ board, currentPlayer, availableDice, backward });
 
   return (
     <MotiView
@@ -281,6 +290,7 @@ const CenteredDiceBar: React.FC<{
       style={[
         styles.centeredDiceBar,
         isWhiteTurn ? styles.centeredDiceBarWhite : styles.centeredDiceBarBlack,
+        isWhiteTurn && { transform: [{ rotate: '180deg' }] },
       ]}
     >
       <Text style={styles.centeredDiceStatus}>{getStatusText()}</Text>
@@ -291,11 +301,12 @@ const CenteredDiceBar: React.FC<{
           onRoll={handleRoll} currentPlayer={currentPlayer}
           whiteBorneOff={whiteBorneOff} blackBorneOff={blackBorneOff}
           singleDie={isSingleDiePhase}
+          dieSize={dieSize}
         />
       </View>
-      {phase === 'MOVING' && availableDice.length > 0 && (
+      {noLegalMoves && (
         <TouchableOpacity style={styles.centeredEndBtn} onPress={end}>
-          <Text style={styles.sidebarEndBtnText}>End Turn</Text>
+          <Text style={styles.sidebarEndBtnText}>No moves · End Turn</Text>
         </TouchableOpacity>
       )}
     </MotiView>
@@ -303,7 +314,7 @@ const CenteredDiceBar: React.FC<{
 };
 
 // ── Mirrored per-player dice bar (always visible on both sides) ─────────────
-// `side === 'top'` (Black) renders rotated 180° so text reads toward that
+// `side === 'top'` (White) renders rotated 180° so text reads toward that
 // player. Active side flashes subtle green when turn changes to it.
 const PlayerDiceBar: React.FC<{
   side: 'top' | 'bottom';
@@ -311,28 +322,30 @@ const PlayerDiceBar: React.FC<{
   handleRoll: (v: number) => void;
   isSingleDiePhase: boolean;
   endTurnOverride?: () => void;
-  onPointPressOverride?: (index: number) => void;
-}> = ({ side, getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, onPointPressOverride }) => {
+  dieSize: number;
+}> = ({ side, getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize }) => {
   const {
-    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice, endTurn,
-    finalHighlights, handlePointPress,
+    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice,
+    board, backward, endTurn,
   } = useGameStore();
   const end = endTurnOverride || endTurn;
-  const pointPress = onPointPressOverride || handlePointPress;
 
   // Physical mapping: White (+1) sits at the top, Black (-1) at the bottom.
   // The top bar is rotated 180° so White reads their side right-side-up.
   const mySide: PlayerSign = side === 'top' ? 1 : -1;
   const isMyTurn = currentPlayer === mySide;
   const isMirrored = side === 'top';
-  const myBorne = mySide === 1 ? whiteBorneOff : blackBorneOff;
 
-  const bearOffSentinel = mySide === 1 ? BEAR_OFF_WHITE : BEAR_OFF_BLACK;
-  const canBearOff = isMyTurn && finalHighlights.includes(bearOffSentinel);
+  // Intelligent End Turn: only visible when the active player has no legal
+  // moves left with their remaining dice. In all other cases, the dice drive
+  // the turn forward naturally.
+  const noLegalMoves = isMyTurn
+    && phase === 'MOVING'
+    && availableDice.length > 0
+    && !currentPlayerHasLegalMoves({ board, currentPlayer, availableDice, backward });
 
   return (
     <MotiView
-      // Subtle pulsing glow on the active player's tray — infinite loop.
       from={{ borderColor: isMyTurn ? 'rgba(50,205,50,0.35)' : 'rgba(255,255,255,0.08)' }}
       animate={{ borderColor: isMyTurn ? 'rgba(50,205,50,0.85)' : 'rgba(255,255,255,0.08)' }}
       transition={{
@@ -366,6 +379,9 @@ const PlayerDiceBar: React.FC<{
         <Text style={styles.playerBarStatus} numberOfLines={1}>
           {isMyTurn ? getStatusText() : 'Waiting…'}
         </Text>
+        <Text style={styles.playerBarBorneMini}>
+          Off: {(mySide === 1 ? whiteBorneOff : blackBorneOff)}/15
+        </Text>
       </View>
 
       <View style={styles.playerBarCenter}>
@@ -376,7 +392,7 @@ const PlayerDiceBar: React.FC<{
             onRoll={handleRoll} currentPlayer={currentPlayer}
             whiteBorneOff={whiteBorneOff} blackBorneOff={blackBorneOff}
             singleDie={isSingleDiePhase}
-            dieSize={30}
+            dieSize={dieSize}
           />
         ) : (
           <View style={styles.playerBarIdle}>
@@ -386,25 +402,87 @@ const PlayerDiceBar: React.FC<{
       </View>
 
       <View style={styles.playerBarRight}>
-        <TouchableOpacity
-          style={[
-            styles.bearOffMiniBadge,
-            canBearOff && styles.bearOffMiniBadgeActive,
-          ]}
-          onPress={() => canBearOff && pointPress(bearOffSentinel)}
-          activeOpacity={canBearOff ? 0.7 : 1}
-          disabled={!canBearOff}
-        >
-          <Text style={styles.bearOffMiniLabel}>BEAR OFF</Text>
-          <Text style={styles.bearOffMiniCount}>{myBorne}/15</Text>
-        </TouchableOpacity>
-        {isMyTurn && phase === 'MOVING' && availableDice.length > 0 && (
+        {noLegalMoves && (
           <TouchableOpacity style={styles.playerBarEndBtn} onPress={end}>
-            <Text style={styles.playerBarEndBtnText}>End</Text>
+            <Text style={styles.playerBarEndBtnText}>No moves · End</Text>
           </TouchableOpacity>
         )}
       </View>
     </MotiView>
+  );
+};
+
+// ── Hotseat opening-roll overlay (INITIAL_ROLL phase, single-device) ────────
+const HotseatOpeningRollOverlay: React.FC = () => {
+  const { openingWhiteDie, openingBlackDie, rollOpeningDie } = useGameStore();
+
+  const isTie = openingWhiteDie != null && openingBlackDie != null && openingWhiteDie === openingBlackDie;
+  const resolved = openingWhiteDie != null && openingBlackDie != null && !isTie;
+  const winnerLabel = resolved
+    ? (openingWhiteDie! > openingBlackDie! ? 'לבן' : 'שחור')
+    : null;
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar style="light" />
+      <View style={styles.initialRollContainer}>
+        <Text style={styles.initialRollTitle}>הטלת פתיחה</Text>
+        <Text style={styles.initialRollSubtitle}>כל שחקן מטיל קובייה אחת — הגבוה מתחיל</Text>
+
+        <View style={styles.initialRollDiceRow}>
+          {/* White slot */}
+          <View style={styles.initialRollSlot}>
+            <Text style={styles.initialRollName}>לבן</Text>
+            {openingWhiteDie != null ? (
+              <MotiView
+                key={`w-${openingWhiteDie}`}
+                from={{ scale: 0, rotate: '180deg' }}
+                animate={{ scale: 1, rotate: '0deg' }}
+                transition={{ type: 'spring', damping: 12 }}
+              >
+                <DieFace value={openingWhiteDie} size={64} />
+              </MotiView>
+            ) : (
+              <TouchableOpacity style={styles.initialRollBtn} onPress={() => rollOpeningDie(1)}>
+                <Text style={styles.initialRollBtnText}>🎲 לחץ לזרוק</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.initialRollVs}>VS</Text>
+
+          {/* Black slot */}
+          <View style={styles.initialRollSlot}>
+            <Text style={styles.initialRollName}>שחור</Text>
+            {openingBlackDie != null ? (
+              <MotiView
+                key={`b-${openingBlackDie}`}
+                from={{ scale: 0, rotate: '180deg' }}
+                animate={{ scale: 1, rotate: '0deg' }}
+                transition={{ type: 'spring', damping: 12 }}
+              >
+                <DieFace value={openingBlackDie} size={64} />
+              </MotiView>
+            ) : (
+              <TouchableOpacity style={styles.initialRollBtn} onPress={() => rollOpeningDie(-1)}>
+                <Text style={styles.initialRollBtnText}>🎲 לחץ לזרוק</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {isTie && (
+          <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <Text style={styles.initialRollResult}>תיקו! זורקים שוב...</Text>
+          </MotiView>
+        )}
+        {resolved && winnerLabel && (
+          <MotiView from={{ opacity: 0, translateY: 20 }} animate={{ opacity: 1, translateY: 0 }}>
+            <Text style={styles.initialRollResult}>{winnerLabel} מתחיל!</Text>
+          </MotiView>
+        )}
+      </View>
+    </SafeAreaView>
   );
 };
 
@@ -515,6 +593,16 @@ export default function App() {
   // Board total height ≈ boardWidth/1.52 + bear-off row (~40)
   const fromH = (availH - 40) * BOARD_ASPECT;
   const boardWidth = Math.max(280, Math.min(availW, fromH));
+
+  // Derive checker diameter from board width using the frozen ratios, and lock
+  // die size to ~0.6x of the checker — comfortably within the 0.5–0.66 band.
+  const innerBoardWidth = boardWidth - 16;
+  const barW = innerBoardWidth * BOARD_FROZEN.BAR_WIDTH_RATIO;
+  const slotW = (innerBoardWidth - barW) / 12;
+  const checkerDiameter = Math.round(slotW * BOARD_FROZEN.PIECE_SLOT_RATIO);
+  // Hard-locked at 0.6x of checker diameter (within the 0.5–0.66 band).
+  // Significantly smaller than before, never touches the surrounding borders.
+  const dieSize = Math.max(14, Math.round(checkerDiameter * 0.6));
 
   // ── Multiplayer screen routing ──────────────────────────────────────────
   const mpScreen = useMultiplayerStore((s) => s.screen);
@@ -709,6 +797,8 @@ export default function App() {
   // ── Screen routing ──────────────────────────────────────────────────────
   if (mpScreen === 'lobby') return <LobbyScreen />;
   if (mpScreen === 'initialRoll') return <InitialRollOverlay />;
+  // Hotseat: single-device opening roll before each game begins.
+  if (phase === 'INITIAL_ROLL' && !mpIsMultiplayer) return <HotseatOpeningRollOverlay />;
 
   const isMoving = phase === 'MOVING';
   const playerLabel = currentPlayer === 1 ? 'White' : 'Black';
@@ -755,6 +845,7 @@ export default function App() {
               <CenteredDiceBar
                 getStatusText={getStatusText} handleRoll={handleRoll}
                 isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+                dieSize={dieSize}
               />
             )}
             <BoardContent
@@ -767,6 +858,7 @@ export default function App() {
               <CenteredDiceBar
                 getStatusText={getStatusText} handleRoll={handleRoll}
                 isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+                dieSize={dieSize}
               />
             )}
             <SpecialRollCard
@@ -813,7 +905,7 @@ export default function App() {
         <PlayerDiceBar
           side="top" getStatusText={getStatusText} handleRoll={handleRoll}
           isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
-          onPointPressOverride={guestPointPress}
+          dieSize={dieSize}
         />
 
         <View style={{ width: boardWidth, alignSelf: 'center' }}>
@@ -829,7 +921,7 @@ export default function App() {
         <PlayerDiceBar
           side="bottom" getStatusText={getStatusText} handleRoll={handleRoll}
           isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
-          onPointPressOverride={guestPointPress}
+          dieSize={dieSize}
         />
 
         <SpecialRollCard
@@ -969,6 +1061,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 2,
   },
+  playerBarBorneMini: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '800',
+    marginTop: 3,
+    letterSpacing: 0.5,
+  },
   playerBarCenter: {
     flex: 1,
     alignItems: 'center',
@@ -988,36 +1087,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.4)',
     fontSize: 10,
     fontStyle: 'italic',
-  },
-  bearOffMiniBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#4A2A10',
-    borderWidth: 1,
-    borderColor: '#8B5A28',
-    alignItems: 'center',
-    minWidth: 64,
-  },
-  bearOffMiniBadgeActive: {
-    borderColor: '#32CD32',
-    backgroundColor: 'rgba(50,205,50,0.18)',
-    shadowColor: '#32CD32',
-    shadowOpacity: 0.6,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
-  },
-  bearOffMiniLabel: {
-    color: 'rgba(255,235,200,0.7)',
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-  },
-  bearOffMiniCount: {
-    color: '#FFD700',
-    fontSize: 12,
-    fontWeight: '900',
   },
   playerBarEndBtn: {
     paddingHorizontal: 12,

@@ -35,10 +35,12 @@ const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 
 };
 
 // ── Throwing Dice Overlay ─────────────────────────────────────────────────────
-// Dice fly from bottom, shrink as they travel, land small on the board, persist
-// until the player completes the move (dice exhausted / turn ends).
+// Dice fly from the active player's edge of the screen toward the board
+// centre: White (top) throws downward, Black (bottom) throws upward. They
+// shrink mid-flight, land on the board, and persist until the player completes
+// the move (dice exhausted / turn ends).
 export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity = 1 }) => {
-  const { dice, phase, availableDice } = useGameStore();
+  const { dice, phase, availableDice, currentPlayer } = useGameStore();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   // Tumbling face values shown during the throw — cycled on interval.
@@ -99,8 +101,11 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
     }, 70);
 
     const intensity = Math.min(3, Math.max(0.8, velocity));
+    // Directional throw: White (top) flies down from the top edge;
+    // Black (bottom) flies up from the bottom edge.
+    const fromTop = currentPlayer === 1;
     const startX = SW / 2;
-    const startY = SH * 0.85;
+    const startY = fromTop ? SH * 0.15 : SH * 0.85;
 
     diceAnims.forEach(a => a.setValue({ x: startX, y: startY }));
     diceRotations.forEach(r => r.setValue(0));
