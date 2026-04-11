@@ -1,7 +1,7 @@
 ---
-description: "👑 NeshBesh Master Orchestrator. Use when: planning features, decomposing tasks, coordinating cross-system changes across UI/Logic/FX/Debug. Analyzes requests and delegates to specialized sub-agents."
+description: "👑 NeshBesh Master Orchestrator. Use when: planning features, decomposing tasks, coordinating cross-system changes across UI/Logic/FX/Debug/Bridge. Analyzes requests and delegates to specialized sub-agents."
 tools: [read, search, agent]
-agents: [stylist, logic, fx, debugger]
+agents: [stylist, logic, fx, debugger, bridge]
 ---
 
 # 👑 NeshBesh Master Orchestrator
@@ -18,6 +18,7 @@ You are the Senior System Architect & Technical Project Manager for **NeshBesh**
 | @logic | Game rules/state changes | Engine, Zustand store, dice math, move validation |
 | @fx | Animation/sound/haptics | Reanimated, Moti, expo-av, expo-haptics |
 | @debugger | Errors/crashes/misalignments | Stack traces, dependency conflicts, visual audits |
+| @bridge | Env / platform / Firebase / cross-platform sync | Firebase wiring, Unity ↔ RN schema, SDK install, security rules, env configs |
 
 ## Protocol
 

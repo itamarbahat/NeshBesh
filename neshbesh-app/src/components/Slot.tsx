@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import { Piece } from './Piece';
 import { BEAR_OFF_WHITE, BEAR_OFF_BLACK } from '../engine';
+import { BOARD_FROZEN } from './boardConstants';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const MAX_VISIBLE_PIECES = 7;
@@ -17,6 +18,7 @@ interface SlotProps {
   isIntermediate: boolean;
   isFinal: boolean;
   onPress: (index: number) => void;
+  pieceSize: number;
 }
 
 /**
@@ -30,13 +32,15 @@ export const Slot: React.FC<SlotProps> = ({
   isIntermediate,
   isFinal,
   onPress,
+  pieceSize,
 }) => {
   const absCount = Math.abs(count);
   const sign = (Math.sign(count) || 1) as 1 | -1;
+  const stackOverlap = Math.round(pieceSize * 0.18);
 
   // ── Cone colours — alternating dark / sandy beige ────────────────────────────
   const isDarkCone = index % 2 === 0;
-  const coneColor = isDarkCone ? '#1A1612' : '#D2B48C'; // Sandy beige for distinction
+  const coneColor = isDarkCone ? BOARD_FROZEN.CONE_DARK : BOARD_FROZEN.CONE_LIGHT;
 
   // ── Highlight state ─────────────────────────────────────────────────────
   const highlightBorder = isSelected
@@ -70,14 +74,14 @@ export const Slot: React.FC<SlotProps> = ({
         <View
           key={i}
           style={{
-            marginTop: isTopRow ? (i === 0 ? 2 : -8) : 0,
-            marginBottom: !isTopRow ? (i === 0 ? 2 : -8) : 0,
+            marginTop: isTopRow ? (i === 0 ? 2 : -stackOverlap) : 0,
+            marginBottom: !isTopRow ? (i === 0 ? 2 : -stackOverlap) : 0,
             zIndex: i + 1,
           }}
         >
           <Piece
             sign={sign}
-            size={28}
+            size={pieceSize}
             stackLabel={hasOverflow && isLast ? `×${absCount}` : undefined}
           />
         </View>
@@ -98,13 +102,15 @@ export const Slot: React.FC<SlotProps> = ({
 
   // ── SVG Cone ───────────────────────────────────────────────────────
   const renderCone = () => {
-    const height = 100; // Increased height slightly for elegance
+    // Cone stretches toward the horizontal center of the board.
+    // viewBox height is tall to let the triangle reach further toward midline,
+    // while the base always matches piece width (28px) via the slot flex.
     const points = isTopRow 
       ? "0,0 100,0 50,100"  // Triangle pointing DOWN
       : "0,100 100,100 50,0"; // Triangle pointing UP
 
     return (
-      <View style={{ width: '100%', height }}>
+      <View style={{ width: '100%', height: '90%' }}>
         <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
           <Polygon
             points={points}
@@ -161,6 +167,7 @@ interface BarSlotProps {
   isSelected: boolean;
   isFinal: boolean;
   onPress: (index: number) => void;
+  pieceSize: number;
 }
 
 export const BarSlot: React.FC<BarSlotProps> = ({
@@ -169,11 +176,13 @@ export const BarSlot: React.FC<BarSlotProps> = ({
   isSelected,
   isFinal,
   onPress,
+  pieceSize,
 }) => {
   const absCount = Math.abs(count);
   const sign = (index === 0 ? 1 : -1) as 1 | -1;
 
   const borderColor = isSelected ? '#FFD700' : isFinal ? '#32CD32' : 'transparent';
+  const barPieceSize = Math.round(pieceSize * 0.92);
 
   return (
     <TouchableOpacity
@@ -185,7 +194,7 @@ export const BarSlot: React.FC<BarSlotProps> = ({
         <View style={styles.barPieces}>
           {Array.from({ length: Math.min(absCount, 4) }, (_, i) => (
             <View key={i} style={{ marginVertical: 1 }}>
-              <Piece sign={sign} size={22} />
+              <Piece sign={sign} size={barPieceSize} />
             </View>
           ))}
           {absCount > 4 && (
@@ -243,7 +252,7 @@ const styles = StyleSheet.create({
 
   // ── Bar ──────────────────────────────────────────────────────────────────────
   bar: {
-    width: 14,
+    width: 22,
     backgroundColor: '#361E0E',
     borderWidth: 1,
     borderColor: '#4A3218',

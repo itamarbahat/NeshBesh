@@ -1,0 +1,80 @@
+# Dependencies (HUGE — never read these)
+node_modules/
+neshbesh-app/node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Lockfiles (huge, low-value for Claude)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+neshbesh-app/package-lock.json
+
+# Build / cache artifacts
+dist/
+build/
+.expo/
+.expo-shared/
+web-build/
+.next/
+.cache/
+.turbo/
+coverage/
+.metro-cache/
+.metro-health-check*
+
+# Native build outputs
+ios/Pods/
+ios/build/
+android/build/
+android/app/build/
+android/.gradle/
+*.ipa
+*.apk
+*.aab
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Generated TypeScript
+expo-env.d.ts
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Assets binaries (read only when explicitly needed)
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp3
+*.wav
+*.mp4
+*.mov
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# OS / IDE noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Firebase/Unity bridge files not needed for day-to-day RN dev
+google-services.json
+GoogleService-Info.plist
+firebase-debug.log

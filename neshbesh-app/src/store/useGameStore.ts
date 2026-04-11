@@ -4,7 +4,7 @@ import {
 } from '../types';
 import {
   generateInitialBoard, rollDie, rollTwoDice,
-  hasBarPieces, canBearOff,
+  hasBarPieces, canBearOff, hasAnyMove,
   calculatePossibleMoves, getDiceAfterMove, applyMove,
   applyNeshStrike, getFreeMoveFinals, calculateVictory,
   BEAR_OFF_WHITE, BEAR_OFF_BLACK,
@@ -24,6 +24,7 @@ export interface NeshBeshState {
   doublesCount: number;
   extraTurn: boolean;
   backward: boolean; // 5:2 / 4:3 backward-move mode
+  pending52Flip: boolean; // 5:2 bar-entry special: flip to backward after bar re-entry
 
   // 2-click selection
   selectedIndex: number | null;
@@ -52,6 +53,7 @@ export interface NeshBeshState {
   confirmSpecialResult: () => void;
   endTurn: () => void;
   startNewGame: () => void;
+  startWithDice: (firstPlayer: PlayerSign, d1: number, d2: number) => void;
 }
 
 const initialScore: Score = { whitePoints: 0, blackPoints: 0, whiteSets: 0, blackSets: 0 };
@@ -63,6 +65,7 @@ const resetTurnState = (player: PlayerSign) => ({
   availableDice: [] as number[],
   extraTurn: false,
   backward: false,
+  pending52Flip: false,
   selectedIndex: null as number | null,
   intermediateHighlights: [] as number[],
   finalHighlights: [] as number[],
@@ -80,6 +83,44 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       ...resetTurnState((-currentPlayer) as PlayerSign),
       doublesCount: 0,
       score, board, whiteBorneOff, blackBorneOff,
+    });
+  };
+
+  // Transitions to MOVING phase; if the player has no legal moves with the given
+  // dice, transitions to SKIP instead so the turn can end gracefully.
+  const enterMovingOrSkip = (patch: {
+    dice: [number, number];
+    availableDice: number[];
+    backward: boolean;
+    doublesCount?: number;
+    extraTurn?: boolean;
+    message?: string | null;
+  }) => {
+    const { board, currentPlayer: sign } = get();
+    const bo = canBearOff(board, sign);
+    if (!hasAnyMove(board, sign, patch.availableDice, patch.backward, bo)) {
+      set({
+        dice: patch.dice,
+        doublesCount: 0,
+        phase: 'SKIP',
+        availableDice: [],
+        backward: false,
+        extraTurn: false,
+        selectedIndex: null,
+        finalHighlights: [],
+        intermediateHighlights: [],
+        message: 'אין מהלכים חוקיים — תור עובר',
+      });
+      return;
+    }
+    set({
+      dice: patch.dice,
+      doublesCount: patch.doublesCount ?? 0,
+      phase: 'MOVING',
+      availableDice: patch.availableDice,
+      backward: patch.backward,
+      extraTurn: patch.extraTurn ?? false,
+      message: patch.message ?? null,
     });
   };
 
@@ -161,6 +202,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     doublesCount: 0,
     extraTurn: false,
     backward: false,
+    pending52Flip: false,
     selectedIndex: null,
     intermediateHighlights: [],
     finalHighlights: [],
@@ -185,7 +227,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           set({ dice: [d1, d2], doublesCount: 0, phase: 'TABLE_FLIP', message: 'FLIP THE TABLE! 3 consecutive doubles.' });
           return;
         }
-        set({ dice: [d1, d2], doublesCount: newCount, phase: 'MOVING', availableDice: [d1, d1, d1, d1], extraTurn: true, backward: false, message: `Double ${d1}s! Extra turn granted.` });
+        enterMovingOrSkip({
+          dice: [d1, d2],
+          doublesCount: newCount,
+          availableDice: [d1, d1, d1, d1],
+          extraTurn: true,
+          backward: false,
+          message: `Double ${d1}s! Extra turn granted.`,
+        });
         return;
       }
 
@@ -216,7 +265,29 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         return;
       }
       if (is(5, 2)) {
-        set({ dice: [d1, d2], doublesCount: 0, phase: 'MOVING', availableDice: [5, 2], backward: true, message: '5:2 — Move 5 and 2 backwards!' });
+        // Bar exception: if player has bar pieces, enter forward first.
+        // Single bar piece → forward entry counts as step 1, remaining die played backward from DIFFERENT piece.
+        // 2+ bar pieces → both dice used forward for entry.
+        const barCount = Math.abs(board[sign === 1 ? 0 : 25]);
+        if (barCount >= 1) {
+          enterMovingOrSkip({
+            dice: [d1, d2],
+            availableDice: [5, 2],
+            backward: false,
+            message: barCount >= 2
+              ? '5:2 מהבר — שני החיילים נכנסים קדימה'
+              : '5:2 מהבר — כניסה קדימה, אחר כך אחורה',
+          });
+          // Only single-bar case needs the flip; with 2+ bar pieces both dice remain forward.
+          if (barCount === 1) set({ pending52Flip: true });
+          return;
+        }
+        enterMovingOrSkip({
+          dice: [d1, d2],
+          availableDice: [5, 2],
+          backward: true,
+          message: '5:2 — Move 5 and 2 backwards!',
+        });
         return;
       }
       if (is(4, 3)) {
@@ -229,16 +300,46 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       }
 
       // Normal roll
-      set({ dice: [d1, d2], doublesCount: 0, phase: 'MOVING', availableDice: [d1, d2], backward: false, message: null });
+      enterMovingOrSkip({
+        dice: [d1, d2],
+        availableDice: [d1, d2],
+        backward: false,
+        message: null,
+      });
     },
 
     // ── rollSingleDie ─────────────────────────────────────────────────────────
     rollSingleDie: () => {
-      const { phase } = get();
+      const { phase, board, currentPlayer: sign } = get();
       const d = rollDie();
       if (phase === 'SPECIAL_43_ROLL') {
+        // Bar exception: if player has bar pieces, enter forward at the rolled value
+        // instead of playing backward. Turn ends after the single entry move.
+        const barCount = Math.abs(board[sign === 1 ? 0 : 25]);
+        if (barCount >= 1) {
+          enterMovingOrSkip({
+            dice: [d, d],
+            availableDice: [d],
+            backward: false,
+            message: `4:3 מהבר — נכנס קדימה ${d}`,
+          });
+          return;
+        }
         set({ phase: 'SPECIAL_43_RESULT', availableDice: [d], backward: true, message: `לך אחורה ${d} צעדים` });
       } else if (phase === 'SPECIAL_51_ROLL') {
+        // Bar exception: with a bar piece, 5:1 becomes a single-die entry —
+        // enter forward at the rolled value if possible, otherwise turn ends.
+        const barCount = Math.abs(board[sign === 1 ? 0 : 25]);
+        if (barCount >= 1) {
+          enterMovingOrSkip({
+            dice: [d, d],
+            availableDice: [d],
+            backward: false,
+            extraTurn: false,
+            message: `5:1 מהבר — ניסיון כניסה עם ${d}`,
+          });
+          return;
+        }
         set({ phase: 'SPECIAL_51_RESULT', availableDice: [d, d, d, d], backward: false, extraTurn: false, message: `שחק דאבל ${d}` });
       }
     },
@@ -268,16 +369,9 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
             message: captured ? 'Captured!' : `Free move! ${movesLeft} left.`,
           });
           if (movesLeft === 0) {
-            // Extra turn after Nesh Strike — same player rolls again
-            const s = get();
-            set({
-              ...resetTurnState(s.currentPlayer),
-              doublesCount: s.doublesCount,
-              score: s.score,
-              board: s.board,
-              whiteBorneOff: s.whiteBorneOff,
-              blackBorneOff: s.blackBorneOff,
-            });
+            // Special rolls (including 6:5 Nesh Strike) do NOT grant an extra turn.
+            // Only regular doubles do. End turn now.
+            endTurnImpl();
           }
         } else if (Math.sign(board[index]) === sign) {
           set({ selectedIndex: index, finalHighlights: getFreeMoveFinals(board, sign), intermediateHighlights: [], moveLocked: false });
@@ -345,6 +439,12 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       const won = doVictoryCheck(nb, sign, newWBO, newBBO);
       if (won) return;
 
+      // 5:2 bar-entry special: after the single bar piece has entered forward,
+      // flip to backward mode for the remaining die (from a different piece).
+      const { pending52Flip } = get();
+      const stillHasBar = Math.abs(nb[sign === 1 ? 0 : 25]) > 0;
+      const shouldFlip52 = pending52Flip && !stillHasBar && newDice.length > 0;
+
       set({
         board: nb,
         whiteBorneOff: newWBO,
@@ -354,8 +454,11 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         finalHighlights: [],
         intermediateHighlights: [],
         moveLocked: false, // Reset lock for next move
-        backward: backward && newDice.length > 0, // Keep backward until dice exhausted
-        message: captured ? 'Captured!' : borneOff ? 'Borne off!' : null,
+        backward: shouldFlip52 ? true : (backward && newDice.length > 0),
+        pending52Flip: shouldFlip52 ? false : pending52Flip,
+        message: shouldFlip52
+          ? 'עכשיו שחק אחורה עם החייל השני'
+          : (captured ? 'Captured!' : borneOff ? 'Borne off!' : null),
       });
 
       afterMoveCheckDice(newDice);
@@ -363,7 +466,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
     // ── chooseDouble (4:5 special) ────────────────────────────────────────────
     chooseDouble: (value: number) => {
-      set({ phase: 'MOVING', availableDice: [value, value, value, value], extraTurn: false, message: `Playing Double ${value}s!` });
+      const { dice } = get();
+      enterMovingOrSkip({
+        dice: dice ?? [value, value],
+        availableDice: [value, value, value, value],
+        backward: false,
+        extraTurn: false,
+        message: `Playing Double ${value}s!`,
+      });
     },
 
     // ── choose63 (6:3 special) ────────────────────────────────────────────────
@@ -371,7 +481,13 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       if (reroll) {
         set({ phase: 'WAITING_ROLL', dice: null, availableDice: [], message: 'Re-rolling 6:3...' });
       } else {
-        set({ phase: 'MOVING', message: null });
+        const { dice } = get();
+        enterMovingOrSkip({
+          dice: dice ?? [6, 3],
+          availableDice: [6, 3],
+          backward: false,
+          message: null,
+        });
       }
     },
 
@@ -383,7 +499,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
     // ── confirmSpecialResult (4:3 / 5:1 result acknowledged) ─────────────────
     confirmSpecialResult: () => {
-      set({ phase: 'MOVING', message: null });
+      const { dice, availableDice, backward } = get();
+      enterMovingOrSkip({
+        dice: dice ?? [0, 0] as any,
+        availableDice,
+        backward,
+        extraTurn: false,
+        message: null,
+      });
     },
 
     // ── endTurn ───────────────────────────────────────────────────────────────
@@ -399,6 +522,98 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         score: initialScore,
         victoryInfo: null,
         ...resetTurnState(1),
+      });
+    },
+
+    // ── startWithDice (multiplayer initial roll) ──────────────────────────────
+    startWithDice: (firstPlayer: PlayerSign, d1: number, d2: number) => {
+      set({
+        board: generateInitialBoard(),
+        whiteBorneOff: 0,
+        blackBorneOff: 0,
+        doublesCount: 0,
+        score: initialScore,
+        victoryInfo: null,
+        ...resetTurnState(firstPlayer),
+      });
+
+      const sign = firstPlayer;
+      const board = get().board;
+      const isDouble = d1 === d2;
+
+      if (isDouble) {
+        enterMovingOrSkip({
+          dice: [d1, d2],
+          doublesCount: 1,
+          availableDice: [d1, d1, d1, d1],
+          extraTurn: true,
+          backward: false,
+          message: `Double ${d1}s! Extra turn granted.`,
+        });
+        return;
+      }
+
+      const is = (a: number, b: number) => (d1 === a && d2 === b) || (d1 === b && d2 === a);
+
+      if (is(1, 2)) {
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SKIP', availableDice: [], message: '1:2 — Turn skipped!' });
+        return;
+      }
+      if (is(4, 5)) {
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_CHOOSE_DOUBLE', availableDice: [], message: '4:5 — Choose which double to play!' });
+        return;
+      }
+      if (is(6, 5)) {
+        const { board: nb, blotsCaptured } = applyNeshStrike(board, sign);
+        set({
+          board: nb, dice: [d1, d2], doublesCount: 0,
+          phase: 'SPECIAL_NESH_STRIKE_FREE_MOVE',
+          neshStrikeFreeMovesLeft: 2, availableDice: [],
+          selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
+          message: `NESH STRIKE! ${blotsCaptured} blot${blotsCaptured !== 1 ? 's' : ''} sent to the Bar. 2 free moves!`,
+        });
+        return;
+      }
+      if (is(6, 3)) {
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_63_CHOICE', availableDice: [6, 3], message: '6:3 — Play normally or re-roll?' });
+        return;
+      }
+      if (is(5, 2)) {
+        const barCount = Math.abs(board[sign === 1 ? 0 : 25]);
+        if (barCount >= 1) {
+          enterMovingOrSkip({
+            dice: [d1, d2],
+            availableDice: [5, 2],
+            backward: false,
+            message: barCount >= 2
+              ? '5:2 מהבר — שני החיילים נכנסים קדימה'
+              : '5:2 מהבר — כניסה קדימה, אחר כך אחורה',
+          });
+          if (barCount === 1) set({ pending52Flip: true });
+          return;
+        }
+        enterMovingOrSkip({
+          dice: [d1, d2],
+          availableDice: [5, 2],
+          backward: true,
+          message: '5:2 — Move 5 and 2 backwards!',
+        });
+        return;
+      }
+      if (is(4, 3)) {
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_43_ROLL', availableDice: [], message: '4:3 — Roll 1 die for your backward move!' });
+        return;
+      }
+      if (is(5, 1)) {
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_51_ROLL', availableDice: [], message: '5:1 — Roll 1 die to determine your double!' });
+        return;
+      }
+
+      enterMovingOrSkip({
+        dice: [d1, d2],
+        availableDice: [d1, d2],
+        backward: false,
+        message: null,
       });
     },
   };

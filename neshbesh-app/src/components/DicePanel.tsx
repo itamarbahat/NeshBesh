@@ -11,9 +11,12 @@ interface DieFaceProps {
 }
 
 export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size = 44 }) => {
-  const dotSize = size * 0.18;
-  const dotColor = used ? '#666' : '#0047AB'; // Deep blue dots
-  
+  const dotSize = size * 0.19;
+  // Classic reference-board palette: 1 & 4 red, 2/3/5/6 blue.
+  const isRedValue = value === 1 || value === 4;
+  const activeColor = isRedValue ? '#C21E1E' : '#0B3FA8';
+  const dotColor = used ? '#9A9A9A' : activeColor;
+
   const renderDots = () => {
     const positions = {
       1: [[50, 50]],
@@ -50,13 +53,33 @@ export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size = 44
           width: size,
           height: size,
           backgroundColor: '#FFFFFF',
-          borderColor: '#E0E0E0',
-          borderWidth: 1.5,
-          borderRadius: size * 0.18,
-          opacity: used ? 0.4 : 1,
+          borderColor: '#BDBDBD',
+          borderWidth: 1,
+          borderRadius: size * 0.22,
+          opacity: used ? 0.45 : 1,
         },
       ]}
     >
+      {/* Subtle inner bevel for depth */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 1,
+          left: 1,
+          right: 1,
+          bottom: 1,
+          borderRadius: size * 0.2,
+          borderTopWidth: 1,
+          borderLeftWidth: 1,
+          borderTopColor: 'rgba(255,255,255,0.9)',
+          borderLeftColor: 'rgba(255,255,255,0.6)',
+          borderBottomWidth: 1,
+          borderRightWidth: 1,
+          borderBottomColor: 'rgba(0,0,0,0.08)',
+          borderRightColor: 'rgba(0,0,0,0.06)',
+        }}
+      />
       {renderDots()}
     </View>
   );
@@ -72,6 +95,8 @@ interface DicePanelProps {
   whiteBorneOff: number;
   blackBorneOff: number;
   singleDie?: boolean;
+  /** Base die pixel size. Default 46 (legacy landscape), PlayerDiceBar passes ~30. */
+  dieSize?: number;
 }
 
 export const DicePanel: React.FC<DicePanelProps> = ({
@@ -80,7 +105,12 @@ export const DicePanel: React.FC<DicePanelProps> = ({
   canRoll,
   onRoll,
   singleDie = false,
+  dieSize = 46,
 }) => {
+  // Derived sizes — scale proportionally from dieSize so doubles/single also shrink.
+  const resultSize = Math.round(dieSize * 0.95);
+  const doubleSize = Math.round(dieSize * 0.82);
+  const singleResultSize = Math.round(dieSize * 1.08);
   const pan = useRef(new RNAnimated.ValueXY()).current;
   const [isSwiping, setIsSwiping] = useState(false);
   const [showResult, setShowResult] = useState(false);
@@ -93,7 +123,7 @@ export const DicePanel: React.FC<DicePanelProps> = ({
 
   useEffect(() => {
     if (rolledDice || (singleDie && availableDice.length > 0)) {
-      const timer = setTimeout(() => setShowResult(true), 800);
+      const timer = setTimeout(() => setShowResult(true), 450);
       return () => clearTimeout(timer);
     } else {
       setShowResult(false);
@@ -143,22 +173,26 @@ export const DicePanel: React.FC<DicePanelProps> = ({
             {(() => {
               const [d1, d2] = rolledDice;
               const isDouble = d1 === d2;
-              if (isDouble) {
+              // Special double (e.g. 5:1 result): availableDice has 4 identical values
+              const isSpecialDouble = !isDouble && availableDice.length === 4
+                && availableDice.every(d => d === availableDice[0]);
+              if (isDouble || isSpecialDouble) {
+                const dv = isDouble ? d1 : availableDice[0];
                 return [0, 1, 2, 3].map(i => (
-                  <DieFace key={i} value={d1} used={i >= availableDice.length} size={38} />
+                  <DieFace key={i} value={dv} used={i >= availableDice.length} size={doubleSize} />
                 ));
               }
               return (
                 <>
-                  <DieFace value={d1} used={!availableDice.includes(d1)} size={44} />
-                  <DieFace value={d2} used={!availableDice.includes(d2)} size={44} />
+                  <DieFace value={d1} used={!availableDice.includes(d1)} size={resultSize} />
+                  <DieFace value={d2} used={!availableDice.includes(d2)} size={resultSize} />
                 </>
               );
             })()}
           </View>
         ) : singleDie && availableDice.length > 0 && showResult ? (
           <View style={styles.diceResultRow}>
-             <DieFace value={availableDice[0]} size={50} />
+             <DieFace value={availableDice[0]} size={singleResultSize} />
           </View>
         ) : canRoll ? (
           singleDie ? (
@@ -171,7 +205,7 @@ export const DicePanel: React.FC<DicePanelProps> = ({
                 styles.readyDice,
                 { transform: [{ translateX: pan.x }, { translateY: pan.y }] }
               ]}>
-                <DieFace value={6} size={46} />
+                <DieFace value={6} size={dieSize} />
                 <Text style={styles.swipePromptText}>לחץ לזרוק</Text>
               </RNAnimated.View>
             </TouchableOpacity>
@@ -181,8 +215,8 @@ export const DicePanel: React.FC<DicePanelProps> = ({
               { transform: [{ translateX: pan.x }, { translateY: pan.y }] }
             ]}>
               <View style={styles.dicePair}>
-                <DieFace value={6} size={46} />
-                <DieFace value={5} size={46} />
+                <DieFace value={6} size={dieSize} />
+                <DieFace value={5} size={dieSize} />
               </View>
               <Text style={styles.swipePromptText}>SWIPE UP TO THROW</Text>
             </RNAnimated.View>
@@ -200,12 +234,12 @@ export const DicePanel: React.FC<DicePanelProps> = ({
 const styles = StyleSheet.create({
   panel: {
     width: '100%',
-    paddingVertical: 10,
+    paddingVertical: 4,
     alignItems: 'center',
   },
   diceContainer: {
-    width: '90%',
-    minHeight: 120,
+    width: '94%',
+    minHeight: 56,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',

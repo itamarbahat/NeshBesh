@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+**/node_modules/
 
 # Expo
 .expo/
@@ -32,3 +33,13 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Firebase admin keys (never commit)
+firebase-debug.log
+firebase-admin-key.json
+serviceAccountKey.json

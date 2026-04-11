@@ -19,7 +19,7 @@ export const SpecialRollOverlay: React.FC = () => {
   const {
     phase, score, victoryInfo,
     choose63,
-    acknowledgeSkip, confirmTableFlip, startNewGame,
+    confirmTableFlip, startNewGame,
   } = state;
 
   const visible =
@@ -56,15 +56,6 @@ export const SpecialRollOverlay: React.FC = () => {
     <Modal transparent animationType="fade" visible={visible}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-
-          {phase === 'SKIP' && (
-            <>
-              <Text style={styles.emoji}>😶</Text>
-              <Text style={styles.title}>1:2 — Turn Skipped!</Text>
-              <Text style={styles.body}>This roll ends your turn immediately.</Text>
-              <Btn label="OK" onPress={acknowledgeSkip} />
-            </>
-          )}
 
           {phase === 'TABLE_FLIP' && (
             <>

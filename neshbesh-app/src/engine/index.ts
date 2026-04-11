@@ -247,6 +247,30 @@ export const getFreeMoveFinals = (board: number[], sign: PlayerSign): number[] =
   return valid;
 };
 
+// Returns true if the current player has at least one legal move with the given dice.
+// Bar re-entry is mandatory when there are bar pieces (only the bar is checked).
+export const hasAnyMove = (
+  board: number[],
+  sign: PlayerSign,
+  dice: number[],
+  backward: boolean,
+  bearOff: boolean,
+): boolean => {
+  if (dice.length === 0) return false;
+  const barIdx = sign === 1 ? 0 : 25;
+  if (Math.abs(board[barIdx]) > 0) {
+    const { final } = calculatePossibleMoves(board, barIdx, sign, dice, backward, bearOff);
+    return final.length > 0;
+  }
+  for (let i = 1; i <= 24; i++) {
+    if (Math.sign(board[i]) === sign) {
+      const { final } = calculatePossibleMoves(board, i, sign, dice, backward, bearOff);
+      if (final.length > 0) return true;
+    }
+  }
+  return false;
+};
+
 export const calculateVictory = (
   board: number[],
   winnerSign: PlayerSign,

@@ -4,9 +4,10 @@ import { useGameStore } from '../store/useGameStore';
 
 // ── Die Face for Overlay ──────────────────────────────────────────────────────
 const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 }) => {
-  const dotSize = size * 0.18;
-  const dotColor = '#0047AB';
-  
+  const dotSize = size * 0.19;
+  // Classic board: 1 & 4 red, 2/3/5/6 blue.
+  const dotColor = value === 1 || value === 4 ? '#C21E1E' : '#0B3FA8';
+
   const renderDots = () => {
     const positions = {
       1: [[50, 50]],
@@ -27,7 +28,7 @@ const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 
   };
 
   return (
-    <View style={[styles.die, { width: size, height: size, borderRadius: size * 0.18 }]}>
+    <View style={[styles.die, { width: size, height: size, borderRadius: size * 0.22 }]}>
       {renderDots()}
     </View>
   );
@@ -40,11 +41,14 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
   const { dice, phase, availableDice } = useGameStore();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
-  
+  // Tumbling face values shown during the throw — cycled on interval.
+  const [tumbleFaces, setTumbleFaces] = useState<[number, number]>([1, 1]);
+  const tumbleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const { width: SW, height: SH } = useWindowDimensions();
 
-  // Landing die size — small, resting on the board
-  const LANDED_SIZE = 22;
+  // Landing die size — big enough to read, matches reference photo scale.
+  const LANDED_SIZE = 58;
 
   const diceAnims = [
     useRef(new Animated.ValueXY({ x: SW / 2, y: SH })).current,
@@ -86,51 +90,64 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
     setAnimating(true);
     setLandedDice(null);
 
+    // Kick off face tumble — change shown values every ~70ms until landing.
+    if (tumbleTimerRef.current) clearInterval(tumbleTimerRef.current);
+    const randFace = () => (1 + Math.floor(Math.random() * 6)) as number;
+    setTumbleFaces([randFace(), randFace()]);
+    tumbleTimerRef.current = setInterval(() => {
+      setTumbleFaces([randFace(), randFace()]);
+    }, 70);
+
     const intensity = Math.min(3, Math.max(0.8, velocity));
     const startX = SW / 2;
     const startY = SH * 0.85;
 
     diceAnims.forEach(a => a.setValue({ x: startX, y: startY }));
     diceRotations.forEach(r => r.setValue(0));
-    diceScales.forEach(s => s.setValue(1.5)); // Start large
+    diceScales.forEach(s => s.setValue(1.6)); // Start large
     diceOpacities.forEach(o => o.setValue(1));
 
     const animations = diceAnims.map((anim, i) => {
-      const dur = ((800 + Math.random() * 400) / intensity);
-      // Land roughly in the center of the board area
+      // Shorter, snappier throw — both dice fly in parallel with no stagger.
+      const dur = ((420 + Math.random() * 160) / intensity);
       const landX = SW * 0.25 + Math.random() * SW * 0.5;
       const landY = SH * 0.25 + Math.random() * SH * 0.25;
 
-      return Animated.sequence([
-        Animated.delay(i * 100),
-        Animated.parallel([
-          Animated.timing(anim, {
-            toValue: { x: landX, y: landY },
-            duration: dur,
-            useNativeDriver: true,
-            easing: Easing.bezier(0.1, 0.7, 0.2, 1),
-          }),
-          Animated.timing(diceRotations[i], {
-            toValue: (6 + Math.random() * 10) * intensity,
-            duration: dur,
-            useNativeDriver: true,
-          }),
-          // Scale: start large (1.5), ends small (0.55)
-          Animated.timing(diceScales[i], {
-            toValue: 0.55,
-            duration: dur,
-            useNativeDriver: true,
-            easing: Easing.out(Easing.cubic),
-          }),
-        ]),
+      return Animated.parallel([
+        Animated.timing(anim, {
+          toValue: { x: landX, y: landY },
+          duration: dur,
+          useNativeDriver: true,
+          easing: Easing.bezier(0.1, 0.7, 0.2, 1),
+        }),
+        Animated.timing(diceRotations[i], {
+          toValue: (6 + Math.random() * 10) * intensity,
+          duration: dur,
+          useNativeDriver: true,
+        }),
+        Animated.timing(diceScales[i], {
+          toValue: 0.95,
+          duration: dur,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.cubic),
+        }),
       ]);
     });
 
     Animated.parallel(animations).start(() => {
+      if (tumbleTimerRef.current) {
+        clearInterval(tumbleTimerRef.current);
+        tumbleTimerRef.current = null;
+      }
+      setTumbleFaces(values);
       setLandedDice(values);
       setAnimating(false);
     });
   };
+
+  useEffect(() => () => {
+    if (tumbleTimerRef.current) clearInterval(tumbleTimerRef.current);
+  }, []);
 
   // Nothing to show
   if (!animating && !landedDice) return null;
@@ -157,7 +174,7 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
             },
           ]}
         >
-          <DieFace value={landedDice ? landedDice[i] : (dice ? dice[i] : 1)} size={LANDED_SIZE} />
+          <DieFace value={tumbleFaces[i]} size={LANDED_SIZE} />
         </Animated.View>
       ))}
 
@@ -176,7 +193,7 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
                     outputRange: ['0deg', '360deg'],
                   })
                 },
-                { scale: 0.55 },
+                { scale: 0.95 },
               ],
             },
           ]}
@@ -203,14 +220,14 @@ const styles = StyleSheet.create({
   },
   animatedDie: {
     position: 'absolute',
-    left: -11,
-    top: -11,
+    left: -15,
+    top: -15,
     zIndex: 9999,
   },
   landedDie: {
     position: 'absolute',
-    left: -11,
-    top: -11,
+    left: -15,
+    top: -15,
     zIndex: 9998,
   },
 });

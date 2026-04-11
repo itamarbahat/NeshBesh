@@ -3,6 +3,7 @@ export type DiceRoll = [number, number];
 export type VictoryType = 'Simple' | 'Mars' | 'Turkish Mars' | 'Star Mars';
 
 export type Phase =
+  | 'INITIAL_ROLL'
   | 'WAITING_ROLL'
   | 'MOVING'
   | 'SKIP'
