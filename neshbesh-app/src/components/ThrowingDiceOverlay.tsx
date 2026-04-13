@@ -3,8 +3,13 @@ import { View, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-n
 import { useGameStore } from '../store/useGameStore';
 
 // ── Die Face for Overlay ──────────────────────────────────────────────────────
-const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 }) => {
+// Every internal measurement (pips, border radius, stroke) is a fraction of
+// `size`, so the overlay face scales cleanly when `dieSize` changes across
+// device sizes.
+const DieFace: React.FC<{ value: number; size: number }> = ({ value, size }) => {
   const dotSize = size * 0.19;
+  const radius = size * 0.22;
+  const borderWidth = Math.max(1, size * 0.035);
   // Classic board: 1 & 4 red, 2/3/5/6 blue.
   const dotColor = value === 1 || value === 4 ? '#C21E1E' : '#0B3FA8';
 
@@ -28,7 +33,7 @@ const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 
   };
 
   return (
-    <View style={[styles.die, { width: size, height: size, borderRadius: size * 0.22 }]}>
+    <View style={[styles.die, { width: size, height: size, borderRadius: radius, borderWidth }]}>
       {renderDots()}
     </View>
   );
@@ -39,7 +44,12 @@ const DieFace: React.FC<{ value: number; size?: number }> = ({ value, size = 48 
 // centre: White (top) throws downward, Black (bottom) throws upward. They
 // shrink mid-flight, land on the board, and persist until the player completes
 // the move (dice exhausted / turn ends).
-export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity = 1 }) => {
+export const ThrowingDiceOverlay: React.FC<{
+  velocity?: number;
+  /** Die pixel size while in flight/landed. Derived from the board's
+   *  pieceSize at the App layer so it stays proportional across devices. */
+  dieSize: number;
+}> = ({ velocity = 1, dieSize }) => {
   const { dice, phase, availableDice, currentPlayer } = useGameStore();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
@@ -48,9 +58,6 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
   const tumbleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { width: SW, height: SH } = useWindowDimensions();
-
-  // Landing die size — big enough to read, matches reference photo scale.
-  const LANDED_SIZE = 58;
 
   const diceAnims = [
     useRef(new Animated.ValueXY({ x: SW / 2, y: SH })).current,
@@ -103,6 +110,8 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
     const intensity = Math.min(3, Math.max(0.8, velocity));
     // Directional throw: White (top) flies down from the top edge;
     // Black (bottom) flies up from the bottom edge.
+    // Landing zone is centred vertically on the board so both throws cover a
+    // symmetric distance — neither player's dice appear to fly off-screen.
     const fromTop = currentPlayer === 1;
     const startX = SW / 2;
     const startY = fromTop ? SH * 0.15 : SH * 0.85;
@@ -113,10 +122,11 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
     diceOpacities.forEach(o => o.setValue(1));
 
     const animations = diceAnims.map((anim, i) => {
-      // Shorter, snappier throw — both dice fly in parallel with no stagger.
       const dur = ((420 + Math.random() * 160) / intensity);
+      // Landing zone: centred around the board middle (~0.4–0.6 SH) with a
+      // lateral spread across the middle 50% of the screen.
       const landX = SW * 0.25 + Math.random() * SW * 0.5;
-      const landY = SH * 0.25 + Math.random() * SH * 0.25;
+      const landY = SH * 0.40 + Math.random() * SH * 0.20;
 
       return Animated.parallel([
         Animated.timing(anim, {
@@ -131,7 +141,7 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
           useNativeDriver: true,
         }),
         Animated.timing(diceScales[i], {
-          toValue: 0.95,
+          toValue: 1,
           duration: dur,
           useNativeDriver: true,
           easing: Easing.out(Easing.cubic),
@@ -179,7 +189,7 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
             },
           ]}
         >
-          <DieFace value={tumbleFaces[i]} size={LANDED_SIZE} />
+          <DieFace value={tumbleFaces[i]} size={dieSize} />
         </Animated.View>
       ))}
 
@@ -203,7 +213,7 @@ export const ThrowingDiceOverlay: React.FC<{ velocity?: number }> = ({ velocity 
             },
           ]}
         >
-          <DieFace value={landedDice[i]} size={LANDED_SIZE} />
+          <DieFace value={landedDice[i]} size={dieSize} />
         </Animated.View>
       ))}
     </View>

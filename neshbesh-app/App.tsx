@@ -105,8 +105,14 @@ const SpecialRollCard: React.FC<{
   const chDbl = onChooseDouble || chooseDouble;
   const cfm = onConfirmSpecial || confirmSpecialResult;
 
-  // Mirror system alerts toward the active player: White (top) reads inverted.
-  const mirroredStyle = currentPlayer === 1 ? { transform: [{ rotate: '180deg' as const }] } : undefined;
+  // Mirror + anchor system alerts toward the active player:
+  //   White (sign=1, top) → rotate 180° and anchor to the top half.
+  //   Black (sign=-1, bottom) → normal orientation, anchor to the bottom half.
+  const isWhite = currentPlayer === 1;
+  const anchorStyle = isWhite
+    ? { position: 'absolute' as const, top: 16, left: 0, right: 0, transform: [{ rotate: '180deg' as const }] }
+    : { position: 'absolute' as const, bottom: 16, left: 0, right: 0 };
+  const mirroredStyle = anchorStyle;
 
   if (phase === 'SPECIAL_CHOOSE_DOUBLE') {
     return (
@@ -130,7 +136,7 @@ const SpecialRollCard: React.FC<{
         <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.specialCard}>
           <View style={styles.specialCardRow}>
             <Text style={styles.specialCardTitle}>{message || 'תור עובר!'}</Text>
-            <TouchableOpacity style={styles.specialCardBtn} onPress={ack}><Text style={styles.specialCardBtnText}>סבבה</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.specialCardBtn} onPress={ack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Text style={styles.specialCardBtnText}>סבבה</Text></TouchableOpacity>
           </View>
         </MotiView>
       </View>
@@ -143,7 +149,7 @@ const SpecialRollCard: React.FC<{
         <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.specialCard}>
           <View style={styles.specialCardRow}>
             <Text style={styles.specialCardTitle}>{message}</Text>
-            <TouchableOpacity style={styles.specialCardBtn} onPress={cfm}><Text style={styles.specialCardBtnText}>יאללה!</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.specialCardBtn} onPress={cfm} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Text style={styles.specialCardBtnText}>יאללה!</Text></TouchableOpacity>
           </View>
         </MotiView>
       </View>
@@ -213,8 +219,9 @@ const BoardContent: React.FC<{
   showEatFlash: boolean;
   lastThrowVelocity: number;
   boardWidth: number;
+  dieSize: number;
   onPointPressOverride?: (index: number) => void;
-}> = ({ isLandscape, boardAnimatedStyle, showEatFlash, lastThrowVelocity, boardWidth, onPointPressOverride }) => {
+}> = ({ isLandscape, boardAnimatedStyle, showEatFlash, lastThrowVelocity, boardWidth, dieSize, onPointPressOverride }) => {
   const {
     board, whiteBorneOff, blackBorneOff, selectedIndex,
     intermediateHighlights, finalHighlights, handlePointPress,
@@ -233,7 +240,7 @@ const BoardContent: React.FC<{
         boardWidth={boardWidth}
         showBearOffRow={isLandscape}
       />
-      <ThrowingDiceOverlay velocity={lastThrowVelocity} />
+      <ThrowingDiceOverlay velocity={lastThrowVelocity} dieSize={dieSize} />
     </ReanimatedView.View>
   );
 };
@@ -305,7 +312,11 @@ const CenteredDiceBar: React.FC<{
         />
       </View>
       {noLegalMoves && (
-        <TouchableOpacity style={styles.centeredEndBtn} onPress={end}>
+        <TouchableOpacity
+          style={styles.centeredEndBtn}
+          onPress={end}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <Text style={styles.sidebarEndBtnText}>No moves · End Turn</Text>
         </TouchableOpacity>
       )}
@@ -403,7 +414,11 @@ const PlayerDiceBar: React.FC<{
 
       <View style={styles.playerBarRight}>
         {noLegalMoves && (
-          <TouchableOpacity style={styles.playerBarEndBtn} onPress={end}>
+          <TouchableOpacity
+            style={styles.playerBarEndBtn}
+            onPress={end}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
             <Text style={styles.playerBarEndBtnText}>No moves · End</Text>
           </TouchableOpacity>
         )}
@@ -852,6 +867,7 @@ export default function App() {
               isLandscape={true} boardAnimatedStyle={boardAnimatedStyle}
               showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
               boardWidth={boardWidth}
+              dieSize={dieSize}
               onPointPressOverride={guestPointPress}
             />
             {currentPlayer === -1 && (
@@ -913,6 +929,7 @@ export default function App() {
             isLandscape={false} boardAnimatedStyle={boardAnimatedStyle}
             showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
             boardWidth={boardWidth}
+            dieSize={dieSize}
             onPointPressOverride={guestPointPress}
           />
         </View>

@@ -4,14 +4,23 @@ import { View, Text, StyleSheet, PanResponder, Dimensions, Animated as RNAnimate
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // ── Die Face Component ────────────────────────────────────────────────────────
+// All internal styling (pips, border radius, bevels, outer border) is
+// expressed as fractions of `size`, so the face scales cleanly from a tiny
+// landed die on the board to the larger ready-to-throw dice in the tray.
 interface DieFaceProps {
   value: number;
   used?: boolean;
-  size?: number;
+  size: number;
 }
 
-export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size = 44 }) => {
+export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size }) => {
   const dotSize = size * 0.19;
+  const radius = size * 0.22;
+  const innerRadius = size * 0.2;
+  const bevelInset = Math.max(1, size * 0.04);
+  const outerBorderWidth = Math.max(1, size * 0.03);
+  const bevelStrokeWidth = Math.max(0.5, size * 0.025);
+
   // Classic reference-board palette: 1 & 4 red, 2/3/5/6 blue.
   const isRedValue = value === 1 || value === 4;
   const activeColor = isRedValue ? '#C21E1E' : '#0B3FA8';
@@ -54,8 +63,8 @@ export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size = 44
           height: size,
           backgroundColor: '#FFFFFF',
           borderColor: '#BDBDBD',
-          borderWidth: 1,
-          borderRadius: size * 0.22,
+          borderWidth: outerBorderWidth,
+          borderRadius: radius,
           opacity: used ? 0.45 : 1,
         },
       ]}
@@ -65,17 +74,17 @@ export const DieFace: React.FC<DieFaceProps> = ({ value, used = false, size = 44
         pointerEvents="none"
         style={{
           position: 'absolute',
-          top: 1,
-          left: 1,
-          right: 1,
-          bottom: 1,
-          borderRadius: size * 0.2,
-          borderTopWidth: 1,
-          borderLeftWidth: 1,
+          top: bevelInset,
+          left: bevelInset,
+          right: bevelInset,
+          bottom: bevelInset,
+          borderRadius: innerRadius,
+          borderTopWidth: bevelStrokeWidth,
+          borderLeftWidth: bevelStrokeWidth,
           borderTopColor: 'rgba(255,255,255,0.9)',
           borderLeftColor: 'rgba(255,255,255,0.6)',
-          borderBottomWidth: 1,
-          borderRightWidth: 1,
+          borderBottomWidth: bevelStrokeWidth,
+          borderRightWidth: bevelStrokeWidth,
           borderBottomColor: 'rgba(0,0,0,0.08)',
           borderRightColor: 'rgba(0,0,0,0.06)',
         }}
@@ -95,8 +104,8 @@ interface DicePanelProps {
   whiteBorneOff: number;
   blackBorneOff: number;
   singleDie?: boolean;
-  /** Base die pixel size. Default 46 (legacy landscape), PlayerDiceBar passes ~30. */
-  dieSize?: number;
+  /** Base die pixel size. Derived from the board's pieceSize (~0.6x). */
+  dieSize: number;
 }
 
 export const DicePanel: React.FC<DicePanelProps> = ({
@@ -105,12 +114,15 @@ export const DicePanel: React.FC<DicePanelProps> = ({
   canRoll,
   onRoll,
   singleDie = false,
-  dieSize = 46,
+  dieSize,
 }) => {
-  // Derived sizes — scale proportionally from dieSize so doubles/single also shrink.
-  const resultSize = Math.round(dieSize * 0.95);
-  const doubleSize = Math.round(dieSize * 0.82);
-  const singleResultSize = Math.round(dieSize * 1.08);
+  // Derived sizes — tightened so every variant stays within
+  // [0.5, 0.66] × pieceSize given dieSize ≈ 0.6 × pieceSize.
+  //   result (1.00) → 0.60×piece     doubles row (0.87) → 0.52×piece
+  //   single result (1.10) → 0.66×piece
+  const resultSize = dieSize;
+  const doubleSize = Math.round(dieSize * 0.87);
+  const singleResultSize = Math.round(dieSize * 1.10);
   const pan = useRef(new RNAnimated.ValueXY()).current;
   const [isSwiping, setIsSwiping] = useState(false);
   const [showResult, setShowResult] = useState(false);
