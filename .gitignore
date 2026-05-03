@@ -43,3 +43,15 @@ Thumbs.db
 firebase-debug.log
 firebase-admin-key.json
 serviceAccountKey.json
+
+# NotebookLM sync (generated files)
+.notebooklm-sync-state.json
+neshbesh-sources.txt
+neshbesh-components.txt
+neshbesh-app-animations.txt
+neshbesh-documentation.txt
+test.txt
+
+# Python venv
+.venv/
+venv/

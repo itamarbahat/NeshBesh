@@ -78,3 +78,11 @@ Thumbs.db
 google-services.json
 GoogleService-Info.plist
 firebase-debug.log
+
+# NotebookLM sync state and consolidated files
+.notebooklm-sync-state.json
+neshbesh-sources.txt
+neshbesh-components.txt
+neshbesh-app-animations.txt
+neshbesh-documentation.txt
+test.txt
