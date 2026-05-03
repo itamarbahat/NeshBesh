@@ -10,13 +10,13 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getDatabase, Database } from 'firebase/database';
 
 const firebaseConfig = {
-  apiKey: 'YOUR_API_KEY',
-  authDomain: 'YOUR_PROJECT.firebaseapp.com',
-  databaseURL: 'https://YOUR_PROJECT-default-rtdb.firebaseio.com',
-  projectId: 'YOUR_PROJECT',
-  storageBucket: 'YOUR_PROJECT.appspot.com',
-  messagingSenderId: 'YOUR_SENDER_ID',
-  appId: 'YOUR_APP_ID',
+  apiKey: 'AIza...',
+  authDomain: 'neshbesh-8eede.firebaseapp.com',
+  databaseURL: 'https://neshbesh-8eede-default-rtdb.firebaseio.com',
+  projectId: 'neshbesh-8eede',
+  storageBucket: 'neshbesh-8eede.appspot.com',
+  messagingSenderId: '...',
+  appId: '...',
 };
 
 /** True when real Firebase credentials have been provided */
