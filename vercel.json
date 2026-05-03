@@ -1,7 +1,4 @@
 {
-  "buildCommand": "cd neshbesh-app && npm install && npx expo export --platform web",
-  "outputDirectory": "neshbesh-app/dist",
-  "env": {
-    "EXPO_DEBUG": "false"
-  }
+  "buildCommand": "npm install --prefix neshbesh-app && npx --prefix neshbesh-app expo export --platform web",
+  "outputDirectory": "neshbesh-app/dist"
 }
