@@ -5,9 +5,9 @@ node_modules/
 
 # Expo
 .expo/
-dist/
 web-build/
 expo-env.d.ts
+# dist/ is deployed to Vercel, so we include it in git
 
 # Native
 .kotlin/

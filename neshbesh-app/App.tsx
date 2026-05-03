@@ -89,6 +89,13 @@ const ChoiceOverlay63: React.FC<{ onChoice: (reRoll: boolean) => void }> = ({ on
   </MotiView>
 );
 
+// Canonical mirroring rule for in-bar text/buttons. White (top) reads the
+// device upside-down, so any UI rendered on their side rotates 180°. Returning
+// `null` (rather than `{}`) keeps the style array tidy and avoids touching the
+// transform stack at all when the actor is Black.
+const mirroredBarStyle = (isWhiteActor: boolean) =>
+  isWhiteActor ? { transform: [{ rotate: '180deg' as const }] } : null;
+
 const SpecialRollCard: React.FC<{
   onAcknowledgeSkip?: () => void;
   onChoose63?: (reRoll: boolean) => void;
@@ -297,7 +304,7 @@ const CenteredDiceBar: React.FC<{
       style={[
         styles.centeredDiceBar,
         isWhiteTurn ? styles.centeredDiceBarWhite : styles.centeredDiceBarBlack,
-        isWhiteTurn && { transform: [{ rotate: '180deg' }] },
+        mirroredBarStyle(isWhiteTurn),
       ]}
     >
       <Text style={styles.centeredDiceStatus}>{getStatusText()}</Text>
@@ -367,7 +374,7 @@ const PlayerDiceBar: React.FC<{
       }}
       style={[
         styles.playerBar,
-        isMirrored && { transform: [{ rotate: '180deg' }] },
+        mirroredBarStyle(isMirrored),
         !isMyTurn && styles.playerBarDim,
       ]}
     >

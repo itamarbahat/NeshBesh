@@ -123,10 +123,15 @@ export const ThrowingDiceOverlay: React.FC<{
 
     const animations = diceAnims.map((anim, i) => {
       const dur = ((420 + Math.random() * 160) / intensity);
-      // Landing zone: centred around the board middle (~0.4–0.6 SH) with a
-      // lateral spread across the middle 50% of the screen.
+      // Landing zone: centred around the board middle with a lateral spread
+      // across the middle 50% of the screen. The vertical band is biased toward
+      // the *opposite* edge so each throw visually "crosses" the board: White
+      // (top) lands in the lower half of the centre band, Black (bottom) in the
+      // upper half. Equal travel distance preserves physics parity.
       const landX = SW * 0.25 + Math.random() * SW * 0.5;
-      const landY = SH * 0.40 + Math.random() * SH * 0.20;
+      const landY = fromTop
+        ? SH * 0.45 + Math.random() * SH * 0.15
+        : SH * 0.40 + Math.random() * SH * 0.15;
 
       return Animated.parallel([
         Animated.timing(anim, {
@@ -136,7 +141,9 @@ export const ThrowingDiceOverlay: React.FC<{
           easing: Easing.bezier(0.1, 0.7, 0.2, 1),
         }),
         Animated.timing(diceRotations[i], {
-          toValue: (6 + Math.random() * 10) * intensity,
+          // Mirror tumble direction so White's dice spin counter-clockwise,
+          // matching the reversed flight path.
+          toValue: (6 + Math.random() * 10) * intensity * (fromTop ? -1 : 1),
           duration: dur,
           useNativeDriver: true,
         }),
