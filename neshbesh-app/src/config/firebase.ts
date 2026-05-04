@@ -10,16 +10,19 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getDatabase, Database } from 'firebase/database';
 
-const env = (process.env as Record<string, string | undefined>);
-
+// IMPORTANT: every EXPO_PUBLIC_* must be referenced via *direct* process.env
+// access. Babel/Expo's transformer inlines the value at build time only when
+// the access is statically traceable (process.env.FOO). Aliasing through a
+// variable (const env = process.env; env.FOO) defeats the inlining and the
+// values are empty at runtime in the browser bundle.
 const firebaseConfig = {
-  apiKey: env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
-  authDomain: env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
-  databaseURL: env.EXPO_PUBLIC_FIREBASE_DATABASE_URL ?? '',
-  projectId: env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
-  storageBucket: env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
-  messagingSenderId: env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
-  appId: env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL ?? '',
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
 };
 
 // A "real" value is non-empty, longer than a placeholder ellipsis, and doesn't
