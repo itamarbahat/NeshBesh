@@ -827,16 +827,19 @@ export default function App() {
     prevDiceRef.current = dice;
   }, [phase, message, dice]);
 
-  // ── Guest action relay: send actions to Firebase instead of local ────────
+  // ── Multiplayer turn-gated action wrappers ──────────────────────────────
+  // Every interactive handler must refuse to fire when it is not the local
+  // player's turn. Without this gate the engine's currentPlayer check is not
+  // enough — both devices share the same currentPlayer, so e.g. the host
+  // could click a black piece during black's turn and the engine would
+  // happily process it as a legal move.
   const isGuest = mpIsMultiplayer && mpRole === 'guest';
-  const guestMySign: PlayerSign = mpRole === 'host' ? 1 : -1;
+  const mySign: PlayerSign = mpRole === 'host' ? 1 : -1;
+  const isMyTurn = !mpIsMultiplayer || currentPlayer === mySign;
 
   const sendAction = useCallback(async (action: { type: string; payload?: any }) => {
     if (isGuest && mpRoomId) await sendGuestAction(mpRoomId, action);
   }, [isGuest, mpRoomId]);
-
-  // Check if it's the local player's turn in multiplayer
-  const isMyTurn = !mpIsMultiplayer || currentPlayer === guestMySign;
 
   const isSingleDiePhase = phase === 'SPECIAL_43_ROLL' || phase === 'SPECIAL_51_ROLL'
     || phase === 'SPECIAL_43_RESULT';
@@ -859,14 +862,39 @@ export default function App() {
     }
   };
 
-  // Guest override functions for multiplayer relay
-  const guestPointPress = isGuest ? (index: number) => sendAction({ type: 'POINT_PRESS', payload: { index } }) : undefined;
-  const guestEndTurn = isGuest ? () => sendAction({ type: 'END_TURN' }) : undefined;
-  const guestAckSkip = isGuest ? () => sendAction({ type: 'ACKNOWLEDGE_SKIP' }) : undefined;
-  const guestChoose63 = isGuest ? (reRoll: boolean) => sendAction({ type: 'CHOOSE_63', payload: { reRoll } }) : undefined;
-  const guestChooseDouble = isGuest ? (value: number) => sendAction({ type: 'CHOOSE_DOUBLE', payload: { value } }) : undefined;
-  const guestConfirmSpecial = isGuest ? () => sendAction({ type: 'CONFIRM_SPECIAL' }) : undefined;
-  const wrappedEndTurn = guestEndTurn || endTurn;
+  // Single wrapped handler per action — used by BOTH host and guest. Each
+  // one checks isMyTurn first, then either sends to Firebase (guest) or
+  // mutates the local store (host / hotseat).
+  const wrappedPointPress = (index: number) => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'POINT_PRESS', payload: { index } });
+    else handlePointPress(index);
+  };
+  const wrappedEndTurn = () => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'END_TURN' });
+    else endTurn();
+  };
+  const wrappedAckSkip = () => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'ACKNOWLEDGE_SKIP' });
+    else useGameStore.getState().acknowledgeSkip();
+  };
+  const wrappedChoose63 = (reRoll: boolean) => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'CHOOSE_63', payload: { reRoll } });
+    else useGameStore.getState().choose63(reRoll);
+  };
+  const wrappedChooseDouble = (value: number) => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'CHOOSE_DOUBLE', payload: { value } });
+    else useGameStore.getState().chooseDouble(value);
+  };
+  const wrappedConfirmSpecial = () => {
+    if (mpIsMultiplayer && !isMyTurn) return;
+    if (isGuest) sendAction({ type: 'CONFIRM_SPECIAL' });
+    else useGameStore.getState().confirmSpecialResult();
+  };
 
   // ── Screen routing ──────────────────────────────────────────────────────
   if (mpScreen === 'lobby') return <LobbyScreen />;
@@ -908,7 +936,6 @@ export default function App() {
   // Non-mirrored, bottom-anchored controls; opponent shown only as a chip.
   // Used for both portrait and landscape when gameMode === 'remote'.
   if (mpGameMode === 'remote') {
-    const mySign: PlayerSign = mpRole === 'host' ? 1 : -1;
     return (
       <SafeAreaView style={styles.safe}>
         <StatusBar style="light" />
@@ -924,7 +951,7 @@ export default function App() {
               showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
               boardWidth={boardWidth}
               dieSize={dieSize}
-              onPointPressOverride={guestPointPress}
+              onPointPressOverride={wrappedPointPress}
             />
           </View>
           <RemoteBottomBar
@@ -932,12 +959,12 @@ export default function App() {
             getStatusText={getStatusText}
             handleRoll={handleRoll}
             isSingleDiePhase={isSingleDiePhase}
-            endTurnOverride={guestEndTurn}
+            endTurnOverride={wrappedEndTurn}
             dieSize={dieSize}
           />
           <SpecialRollCard
-            onAcknowledgeSkip={guestAckSkip} onChoose63={guestChoose63}
-            onChooseDouble={guestChooseDouble} onConfirmSpecial={guestConfirmSpecial}
+            onAcknowledgeSkip={wrappedAckSkip} onChoose63={wrappedChoose63}
+            onChooseDouble={wrappedChooseDouble} onConfirmSpecial={wrappedConfirmSpecial}
           />
         </View>
         <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
@@ -960,7 +987,7 @@ export default function App() {
             {currentPlayer === 1 && (
               <CenteredDiceBar
                 getStatusText={getStatusText} handleRoll={handleRoll}
-                isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+                isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
                 dieSize={dieSize}
               />
             )}
@@ -969,18 +996,18 @@ export default function App() {
               showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
               boardWidth={boardWidth}
               dieSize={dieSize}
-              onPointPressOverride={guestPointPress}
+              onPointPressOverride={wrappedPointPress}
             />
             {currentPlayer === -1 && (
               <CenteredDiceBar
                 getStatusText={getStatusText} handleRoll={handleRoll}
-                isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+                isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
                 dieSize={dieSize}
               />
             )}
             <SpecialRollCard
-              onAcknowledgeSkip={guestAckSkip} onChoose63={guestChoose63}
-              onChooseDouble={guestChooseDouble} onConfirmSpecial={guestConfirmSpecial}
+              onAcknowledgeSkip={wrappedAckSkip} onChoose63={wrappedChoose63}
+              onChooseDouble={wrappedChooseDouble} onConfirmSpecial={wrappedConfirmSpecial}
             />
           </View>
           <PlayerSidebar playerSign={1} />
@@ -1021,7 +1048,7 @@ export default function App() {
         {/* White player's dice bar — top, 180° rotated so text reads upward */}
         <PlayerDiceBar
           side="top" getStatusText={getStatusText} handleRoll={handleRoll}
-          isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+          isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
           dieSize={dieSize}
         />
 
@@ -1031,20 +1058,20 @@ export default function App() {
             showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
             boardWidth={boardWidth}
             dieSize={dieSize}
-            onPointPressOverride={guestPointPress}
+            onPointPressOverride={wrappedPointPress}
           />
         </View>
 
         {/* Black player's dice bar — bottom, normal orientation */}
         <PlayerDiceBar
           side="bottom" getStatusText={getStatusText} handleRoll={handleRoll}
-          isSingleDiePhase={isSingleDiePhase} endTurnOverride={guestEndTurn}
+          isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
           dieSize={dieSize}
         />
 
         <SpecialRollCard
-          onAcknowledgeSkip={guestAckSkip} onChoose63={guestChoose63}
-          onChooseDouble={guestChooseDouble} onConfirmSpecial={guestConfirmSpecial}
+          onAcknowledgeSkip={wrappedAckSkip} onChoose63={wrappedChoose63}
+          onChooseDouble={wrappedChooseDouble} onConfirmSpecial={wrappedConfirmSpecial}
         />
       </View>
       <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
