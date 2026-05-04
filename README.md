@@ -2,6 +2,8 @@
 
 **NeshBesh** is a mobile backgammon game with a twisted set of custom dice rules, built with React Native + Expo. It's a digital adaptation of a house-rules variant of Shesh-Besh (שש-בש) played in Israel — where certain dice combinations trigger special mechanics ranging from forced backwards moves to the devastating "Nesh Strike."
 
+🎮 **Play now (web build):** https://nesh-besh-git-master-itamarbahats-projects.vercel.app/
+
 ---
 
 ## Motivation
@@ -310,6 +312,12 @@ NeshBesh/
 - Landscape layout with player sidebars
 - Hebrew UI for special roll interactions
 - 5-agent AI development system with domain separation
+- **Remote two-device multiplayer** via Firebase Realtime Database (host-authoritative)
+- **Deep-link invites** (`https://neshbesh.app/join/{code}` and `neshbesh://join/{code}`) — share via WhatsApp / SMS / email; tapping opens the app and auto-joins
+- **Two distinct UI modes:**
+  - **Local hotseat** — mirrored layout (top player rotated 180°)
+  - **Remote two-device** — non-mirrored layout, controls anchored at the bottom, opponent shown only as a status chip at the top
+- Manual 6-char room code entry (primary) with QR scan preserved as a secondary "More options" fallback
 
 ---
 
@@ -317,9 +325,9 @@ NeshBesh/
 
 ### Gameplay
 - **AI Opponent** — Single-player mode with difficulty levels
-- **Online Multiplayer** — Real-time matches via WebSocket or Firebase
 - **Move history / replay** — Undo-free, but allow post-game review
 - **Notation system** — Record and share games
+- **Reconnect / resume** — Recover gracefully after a guest disconnects mid-game
 
 ### UX / Visual
 - **Landscape polish** — Bring the new header design to landscape mode

@@ -10,18 +10,21 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Share,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MotiView } from 'moti';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import QRCode from 'react-native-qrcode-svg';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
+import { getShareUrl } from '../services/multiplayerService';
 
 const QR_PREFIX = 'NESHBESH:';
 
 export const LobbyScreen: React.FC = () => {
   const {
     lobbyState, playerName, opponentName, roomId, role,
+    pendingJoinCode, setPendingJoinCode,
     setPlayerName, hostRoom, joinExistingRoom, goToGame,
     startLocalGame, resetToLobby,
   } = useMultiplayerStore();
@@ -29,6 +32,9 @@ export const LobbyScreen: React.FC = () => {
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
+  const [showQrFallback, setShowQrFallback] = useState(false);
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [showMoreJoinOptions, setShowMoreJoinOptions] = useState(false);
 
   const handleCreateRoom = async () => {
     if (!playerName.trim()) {
@@ -75,6 +81,56 @@ export const LobbyScreen: React.FC = () => {
   const handleStartGame = () => {
     goToGame();
   };
+
+  // ── Deep-link arrival: auto-join if name set, otherwise prefill code ──────
+  useEffect(() => {
+    if (!pendingJoinCode || lobbyState !== 'IDLE') return;
+    if (playerName.trim()) {
+      // Name already set — auto-join immediately
+      (async () => {
+        const ok = await joinExistingRoom(pendingJoinCode);
+        setPendingJoinCode(null);
+        if (!ok) {
+          Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+        }
+      })();
+    } else {
+      // No name yet — prefill manual code field; user submits after typing name
+      setJoinCodeInput(pendingJoinCode);
+      setShowMoreJoinOptions(true);
+    }
+  }, [pendingJoinCode, playerName, lobbyState]);
+
+  const handleManualJoin = useCallback(async () => {
+    if (!playerName.trim()) {
+      Alert.alert('שם חסר', 'הזן את שמך לפני הצטרפות');
+      return;
+    }
+    const code = joinCodeInput.trim().toUpperCase();
+    if (code.length < 4) {
+      Alert.alert('קוד לא תקין', 'הזן קוד חדר בן 6 תווים');
+      return;
+    }
+    const ok = await joinExistingRoom(code);
+    if (!ok) {
+      Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+    } else {
+      setPendingJoinCode(null);
+    }
+  }, [playerName, joinCodeInput, joinExistingRoom, setPendingJoinCode]);
+
+  const handleShareInvite = useCallback(async () => {
+    if (!roomId) return;
+    const url = getShareUrl(roomId);
+    try {
+      await Share.share({
+        message: `הצטרף למשחק NeshBesh שלי: ${url}\n\nאו הזן קוד חדר: ${roomId}`,
+        url, // iOS-only; Android ignores and uses message
+      });
+    } catch {
+      // User dismissed share sheet — no-op
+    }
+  }, [roomId]);
 
   // ── QR Scanning View ────────────────────────────────────────────────────────
   if (scanning) {
@@ -146,31 +202,80 @@ export const LobbyScreen: React.FC = () => {
                 <TouchableOpacity style={s.primaryBtn} onPress={handleCreateRoom}>
                   <Text style={s.primaryBtnText}>צור חדר</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={s.secondaryBtn} onPress={handleStartScanning}>
-                  <Text style={s.secondaryBtnText}>הצטרף לחדר</Text>
+
+                {/* Manual code entry — primary join path (US-006) */}
+                <TextInput
+                  style={s.joinCodeInput}
+                  value={joinCodeInput}
+                  onChangeText={(t) => setJoinCodeInput(t.toUpperCase())}
+                  placeholder="קוד חדר"
+                  placeholderTextColor="rgba(255,215,0,0.3)"
+                  maxLength={6}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity style={s.secondaryBtn} onPress={handleManualJoin}>
+                  <Text style={s.secondaryBtnText}>הצטרף עם קוד</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Demoted QR scan — hidden behind disclosure (US-007) */}
+              <TouchableOpacity
+                style={s.moreOptionsBtn}
+                onPress={() => setShowMoreJoinOptions((v) => !v)}
+              >
+                <Text style={s.moreOptionsText}>
+                  {showMoreJoinOptions ? 'הסתר אפשרויות ▴' : 'אפשרויות הצטרפות נוספות ▾'}
+                </Text>
+              </TouchableOpacity>
+              {showMoreJoinOptions && (
+                <TouchableOpacity style={s.qrScanBtn} onPress={handleStartScanning}>
+                  <Text style={s.qrScanBtnText}>📷 סרוק QR</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity style={s.localBtn} onPress={startLocalGame}>
                 <Text style={s.localBtnText}>משחק מקומי (שני שחקנים על מכשיר אחד)</Text>
               </TouchableOpacity>
             </>
           )}
 
-          {/* ── HOSTING: QR code + waiting ────────────────────────────────── */}
+          {/* ── HOSTING: Share invite + waiting ───────────────────────────── */}
           {lobbyState === 'HOSTING' && roomId && (
             <>
               <Text style={s.cardTitle}>ממתין ליריב...</Text>
-              <View style={s.qrWrapper}>
-                <QRCode
-                  value={`${QR_PREFIX}${roomId}`}
-                  size={180}
-                  backgroundColor="white"
-                  color="#1A0D05"
-                />
-              </View>
-              <Text style={s.roomCode}>קוד חדר: {roomId}</Text>
+
+              <TouchableOpacity style={s.shareBtn} onPress={handleShareInvite}>
+                <Text style={s.shareBtnText}>📤 שתף הזמנה</Text>
+              </TouchableOpacity>
+              <Text style={s.shareHint}>שלח לחבר ב-WhatsApp / SMS / מייל</Text>
+
+              <Text style={s.roomCodeLabel}>או תן לו את הקוד:</Text>
+              <Text style={s.roomCode} selectable>{roomId}</Text>
+
               <ActivityIndicator color="#FFD700" style={{ marginTop: 16 }} />
-              <Text style={s.waitText}>שתף את הקוד או תן ליריב לסרוק</Text>
+              <Text style={s.waitText}>ממתין שהיריב יצטרף...</Text>
+
+              {/* QR fallback — kept available, demoted via disclosure (US-007) */}
+              <TouchableOpacity
+                style={s.moreOptionsBtn}
+                onPress={() => setShowQrFallback((v) => !v)}
+              >
+                <Text style={s.moreOptionsText}>
+                  {showQrFallback ? 'הסתר QR ▴' : 'אפשרויות נוספות ▾'}
+                </Text>
+              </TouchableOpacity>
+              {showQrFallback && (
+                <View style={s.qrWrapper}>
+                  <QRCode
+                    value={`${QR_PREFIX}${roomId}`}
+                    size={140}
+                    backgroundColor="white"
+                    color="#1A0D05"
+                  />
+                </View>
+              )}
+
               <TouchableOpacity style={s.cancelBtn} onPress={resetToLobby}>
                 <Text style={s.cancelBtnText}>ביטול</Text>
               </TouchableOpacity>
@@ -330,6 +435,75 @@ const s = StyleSheet.create({
 
   cancelBtn: { marginTop: 16, paddingVertical: 8 },
   cancelBtnText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
+
+  // Share invite (US-004) + More-options disclosure (US-007)
+  shareBtn: {
+    backgroundColor: '#32CD32',
+    width: '100%',
+    height: 52,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#32CD32',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  shareBtnText: { color: '#FFF', fontWeight: '900', fontSize: 18 },
+  shareHint: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  roomCodeLabel: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    marginTop: 18,
+    fontWeight: '600',
+  },
+  moreOptionsBtn: {
+    marginTop: 14,
+    paddingVertical: 6,
+  },
+  moreOptionsText: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Manual code input (US-006)
+  joinCodeInput: {
+    width: '100%',
+    height: 52,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    color: '#FFD700',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 6,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+    marginTop: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+
+  // Demoted QR scan button (US-007)
+  qrScanBtn: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    width: '100%',
+    marginTop: 8,
+  },
+  qrScanBtnText: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 14 },
 
   // Scanner
   scannerContainer: { flex: 1 },

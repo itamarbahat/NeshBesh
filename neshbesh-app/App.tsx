@@ -14,6 +14,7 @@ import {
 import ReanimatedView from 'react-native-reanimated';
 import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
+import * as Linking from 'expo-linking';
 import { Trophy, X, Info } from 'lucide-react-native';
 import { useGameStore, currentPlayerHasLegalMoves } from './src/store/useGameStore';
 import { useMultiplayerStore } from './src/store/useMultiplayerStore';
@@ -28,6 +29,8 @@ import { DicePanel, DieFace } from './src/components/DicePanel';
 import { DoubleChooserPanel } from './src/components/DoubleChooserPanel';
 import { SpecialRollOverlay } from './src/components/SpecialRollOverlay';
 import { ThrowingDiceOverlay } from './src/components/ThrowingDiceOverlay';
+import { RemoteBottomBar } from './src/components/RemoteBottomBar';
+import { OpponentHeaderChip } from './src/components/OpponentHeaderChip';
 import { useTableFlipAnimation } from './src/animations';
 import { useAudioManager } from './src/audio/useAudioManager';
 import { PlayerSign } from './src/types';
@@ -631,6 +634,31 @@ export default function App() {
   const mpRole = useMultiplayerStore((s) => s.role);
   const mpRoomId = useMultiplayerStore((s) => s.roomId);
   const mpIsMultiplayer = useMultiplayerStore((s) => s.isMultiplayer);
+  const mpGameMode = useMultiplayerStore((s) => s.gameMode);
+
+  // ── Deep link handling: parse */join/:code and stash in store ────────────
+  // The lobby reads `pendingJoinCode` and either auto-joins (name set) or
+  // prefills the manual join field.
+  useEffect(() => {
+    const parseAndStash = (url: string | null) => {
+      if (!url) return;
+      // Accept neshbesh://join/CODE OR https://neshbesh.app/join/CODE
+      const match = url.match(/\/join\/([A-Z0-9]{4,8})/i);
+      if (!match) return;
+      const code = match[1].toUpperCase();
+      const mp = useMultiplayerStore.getState();
+      // Don't override an active session
+      if (mp.roomId || mp.isMultiplayer) return;
+      mp.setPendingJoinCode(code);
+    };
+
+    // Cold start: app launched from a link
+    Linking.getInitialURL().then(parseAndStash);
+
+    // Warm start: link tapped while app is already running
+    const sub = Linking.addEventListener('url', ({ url }) => parseAndStash(url));
+    return () => sub.remove();
+  }, []);
 
   const {
     phase, dice, availableDice, doublesCount, currentPlayer,
@@ -851,6 +879,48 @@ export default function App() {
       <TouchableOpacity style={styles.scoreIconBtn} onPress={() => setShowScoreModal(true)}><Trophy color="#FFD700" size={20} /></TouchableOpacity>
     </View>
   );
+
+  // ── Remote two-device layout (US-010) ──────────────────────────────────
+  // Non-mirrored, bottom-anchored controls; opponent shown only as a chip.
+  // Used for both portrait and landscape when gameMode === 'remote'.
+  if (mpGameMode === 'remote') {
+    const mySign: PlayerSign = mpRole === 'host' ? 1 : -1;
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar style="light" />
+        <View style={isLandscape ? styles.landscapeHeader : styles.header}>
+          {renderLogo()}
+          {renderHeaderActions()}
+        </View>
+        <OpponentHeaderChip mySign={mySign} />
+        <View style={styles.mainContent}>
+          <View style={{ width: boardWidth, alignSelf: 'center' }}>
+            <BoardContent
+              isLandscape={isLandscape} boardAnimatedStyle={boardAnimatedStyle}
+              showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
+              boardWidth={boardWidth}
+              dieSize={dieSize}
+              onPointPressOverride={guestPointPress}
+            />
+          </View>
+          <RemoteBottomBar
+            mySign={mySign}
+            getStatusText={getStatusText}
+            handleRoll={handleRoll}
+            isSingleDiePhase={isSingleDiePhase}
+            endTurnOverride={guestEndTurn}
+            dieSize={dieSize}
+          />
+          <SpecialRollCard
+            onAcknowledgeSkip={guestAckSkip} onChoose63={guestChoose63}
+            onChooseDouble={guestChooseDouble} onConfirmSpecial={guestConfirmSpecial}
+          />
+        </View>
+        <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
+        <SpecialRollOverlay />
+      </SafeAreaView>
+    );
+  }
 
   if (isLandscape) {
     return (

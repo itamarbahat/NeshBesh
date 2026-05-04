@@ -20,6 +20,17 @@ function notifyLocal(roomId: string) {
   localListeners.get(roomId)?.forEach((cb) => cb(data));
 }
 
+// ── Canonical join URL base (universal link) ───────────────────────────────
+// Single source of truth: changing the host here updates share links, deep
+// link parsing, and any future invite surface. Paired with `app.json`'s
+// `scheme: "neshbesh"` and the `/join` intent filter / associated domain.
+export const SHARE_URL_BASE = 'https://neshbesh.app/join';
+
+// ── Build a shareable join URL for a room ───────────────────────────────────
+export const getShareUrl = (roomId: string): string => {
+  return `${SHARE_URL_BASE}/${roomId}`;
+};
+
 // ── Generate short room code ────────────────────────────────────────────────
 export const generateRoomCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

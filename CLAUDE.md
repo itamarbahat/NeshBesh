@@ -48,6 +48,18 @@
 
 ## 3. UX & UI Requirements
 
+### Game Modes
+*   **`gameMode: 'local' | 'remote'`** lives on `useMultiplayerStore`. Single source of truth for layout branching in `App.tsx`.
+*   **Local hotseat** (`'local'`) — mirrored layout: top `PlayerDiceBar` rotated 180°, special-roll cards anchor to active player's side.
+*   **Remote two-device** (`'remote'`) — non-mirrored: `OpponentHeaderChip` at top (name + bear-off + "Rolling…/Thinking…" pulse, NEVER dice values), `RemoteBottomBar` at the bottom carries my dice + status + conditional End Turn.
+*   Local hotseat rendering must remain byte-equivalent — never edit `PlayerDiceBar` / `PlayerSidebar` while working on remote layout.
+
+### Multiplayer Sync
+*   **Deep links** — `https://neshbesh.app/join/{code}` (universal link) and `neshbesh://join/{code}` (custom scheme). Parsed at App level via `expo-linking`, stashed as `pendingJoinCode` on the multiplayer store, consumed by lobby (auto-join if `playerName` set, else prefill the manual code field).
+*   **Manual code entry** is the primary in-app join path; QR scan is preserved but demoted behind a `אפשרויות הצטרפות נוספות ▾` disclosure.
+*   **Host-authoritative** — guest actions go through `sendGuestAction`; the host runs all engine mutations and pushes state via `syncGameState`.
+*   **Share helper** — `getShareUrl(roomId)` in `multiplayerService.ts` is the single source of the canonical join URL.
+
 ### Animation & Visuals
 *   **Animations**: Built using **Reanimated / Moti**. Distinct visual animations for "Eating" a piece and "Table Flip".
 *   **Pop-ups**: Dismissible tutorial cards explaining special rules as they happen.

@@ -1,0 +1,53 @@
+# Progress Log
+
+## Learnings
+
+### PRD-multiplayer.md — implementation notes (2026-05-04)
+- `expo-linking` added to `package.json` at `~8.0.8` (Expo SDK 54). User must run
+  `npm install` from `neshbesh-app/` before the dev server starts.
+- Deep link parsing lives in `App.tsx` (cold + warm start), not `LobbyScreen.tsx`,
+  because cold-start URLs must be captured before screen routing decisions.
+- `pendingJoinCode` was added to `useMultiplayerStore` so the App-level URL
+  listener can stash a code that the lobby consumes (auto-join if `playerName`
+  set; prefill manual input otherwise).
+- QR scan code path was preserved verbatim — only the entry point was demoted
+  behind a `אפשרויות הצטרפות נוספות ▾` disclosure on the IDLE lobby and a
+  `אפשרויות נוספות ▾` disclosure on the HOSTING screen.
+- `gameMode` defaults to `'local'`. `startLocalGame()` keeps it `'local'`;
+  `hostRoom()` and `joinExistingRoom()` flip it to `'remote'`. `resetToLobby()`
+  resets to `'local'`. The remote layout branch in `App.tsx` short-circuits both
+  portrait and landscape paths so local hotseat rendering is byte-equivalent
+  for the `gameMode === 'local'` path.
+- Typecheck status: NOT verified locally — `node`/`npm`/`tsc` are not on PATH
+  in this dev environment. User should run `npx tsc --noEmit` from
+  `neshbesh-app/` to verify.
+
+## Manual Test Plan
+
+### Local Hotseat (gameMode === 'local')
+- [ ] Top `PlayerDiceBar` is rotated 180° (text reads upward toward White)
+- [ ] Bottom `PlayerDiceBar` is non-rotated (Black side)
+- [ ] Special-roll cards mirror toward the active player
+- [ ] `HotseatOpeningRollOverlay` appears before the first game and resolves on a non-tie roll
+- [ ] No `OpponentHeaderChip` or `RemoteBottomBar` ever render
+
+### Remote Two-Device (gameMode === 'remote')
+- [ ] Single bottom bar shows my dice + status + conditional End Turn
+- [ ] No rotation applied anywhere
+- [ ] Opponent chip at top shows name + bear-off count
+- [ ] Opponent chip shows "Rolling…" when opponent is in `WAITING_ROLL`
+- [ ] Opponent chip shows "Thinking…" when opponent is in `MOVING`
+- [ ] Tapping a shared link cold-starts the app and lands in the lobby with the code prefilled
+- [ ] `Share Invite` button on the host waiting screen opens the OS share sheet
+- [ ] Manual code entry joins the same room
+- [ ] QR scan still works from the `More join options` disclosure
+
+### Dice Polish (covers PRD-dice-polish.md)
+- [ ] Dice never overlap a checker column at rest (test on a board with stacked points)
+- [ ] Roll duration varies visibly between rolls (sometimes <1.5s, sometimes >3s)
+- [ ] Tray dice are noticeably larger than landed dice
+- [ ] Landing pop is visible (brief grow then settle)
+- [ ] Shake SFX plays continuously for the entire roll, stops on landing
+- [ ] Landing thud fires once per roll
+- [ ] Checker click fires on every move, not on captures
+- [ ] No color / texture / proportion regression on Board, Piece, Slot

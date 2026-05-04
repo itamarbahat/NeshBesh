@@ -8,6 +8,7 @@ import { rollDie } from '../engine';
 
 export type LobbyScreen = 'lobby' | 'initialRoll' | 'game';
 export type LobbyState = 'IDLE' | 'HOSTING' | 'JOINING' | 'CONNECTED' | 'INITIAL_ROLL';
+export type GameMode = 'local' | 'remote';
 
 export interface MultiplayerState {
   // Navigation
@@ -20,16 +21,21 @@ export interface MultiplayerState {
   roomId: string | null;
   role: 'host' | 'guest' | null;
   isMultiplayer: boolean;
+  gameMode: GameMode;
 
   // Initial roll
   myDie: number | null;
   opponentDie: number | null;
+
+  // Pending deep-link join (set by App-level URL listener, consumed by lobby)
+  pendingJoinCode: string | null;
 
   // Internal
   _unsubRoom: Unsubscribe | null;
 
   // Actions
   setPlayerName: (name: string) => void;
+  setPendingJoinCode: (code: string | null) => void;
   hostRoom: () => Promise<void>;
   joinExistingRoom: (roomId: string) => Promise<boolean>;
   rollMyDie: () => Promise<void>;
@@ -47,11 +53,15 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
   roomId: null,
   role: null,
   isMultiplayer: false,
+  gameMode: 'local',
   myDie: null,
   opponentDie: null,
+  pendingJoinCode: null,
   _unsubRoom: null,
 
   setPlayerName: (name: string) => set({ playerName: name }),
+
+  setPendingJoinCode: (code: string | null) => set({ pendingJoinCode: code }),
 
   hostRoom: async () => {
     const { playerName } = get();
@@ -81,6 +91,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       role: 'host',
       lobbyState: 'HOSTING',
       isMultiplayer: true,
+      gameMode: 'remote',
       _unsubRoom: unsub,
     });
   },
@@ -113,6 +124,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       role: 'guest',
       lobbyState: 'CONNECTED',
       isMultiplayer: true,
+      gameMode: 'remote',
       _unsubRoom: unsub,
     });
 
@@ -138,6 +150,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       screen: 'game',
       lobbyState: 'IDLE',
       isMultiplayer: false,
+      gameMode: 'local',
       role: null,
       roomId: null,
     });
@@ -159,8 +172,10 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       roomId: null,
       role: null,
       isMultiplayer: false,
+      gameMode: 'local',
       myDie: null,
       opponentDie: null,
+      pendingJoinCode: null,
       _unsubRoom: null,
     });
   },
