@@ -764,23 +764,27 @@ export default function App() {
 
     const unsub = subscribeToGameState(mpRoomId, (state) => {
       if (!state) return;
+      // Firebase Realtime Database silently drops null and empty array values
+      // during serialization. Coerce them back to safe defaults so the
+      // renderer (Board uses .includes() on the highlight arrays) does not
+      // crash with "Cannot read properties of undefined" → white screen.
       useGameStore.setState({
         board: state.board,
         phase: state.phase,
-        dice: state.dice,
-        availableDice: state.availableDice,
+        dice: state.dice ?? null,
+        availableDice: state.availableDice ?? [],
         currentPlayer: state.currentPlayer,
-        whiteBorneOff: state.whiteBorneOff,
-        blackBorneOff: state.blackBorneOff,
-        doublesCount: state.doublesCount,
-        message: state.message,
+        whiteBorneOff: state.whiteBorneOff ?? 0,
+        blackBorneOff: state.blackBorneOff ?? 0,
+        doublesCount: state.doublesCount ?? 0,
+        message: state.message ?? null,
         score: state.score,
-        victoryInfo: state.victoryInfo,
-        selectedIndex: state.selectedIndex,
-        intermediateHighlights: state.intermediateHighlights,
-        finalHighlights: state.finalHighlights,
-        backward: state.backward,
-        extraTurn: state.extraTurn,
+        victoryInfo: state.victoryInfo ?? null,
+        selectedIndex: state.selectedIndex ?? null,
+        intermediateHighlights: state.intermediateHighlights ?? [],
+        finalHighlights: state.finalHighlights ?? [],
+        backward: state.backward ?? false,
+        extraTurn: state.extraTurn ?? false,
       });
     });
 
