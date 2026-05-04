@@ -49,6 +49,13 @@ interface BoardProps {
   boardWidth: number;
   /** Portrait layout has its own per-player bear-off buttons, so the top tray is hidden there. */
   showBearOffRow?: boolean;
+  /**
+   * When true, rotate the entire board 180° so the white player (whose home
+   * is at points 19-24, top-right of the unflipped layout) sees their home
+   * land at the bottom-left, looking at the board from "their side". Used in
+   * remote two-device mode where each player views their own device.
+   */
+  flipped?: boolean;
 }
 
 // ── Board component ───────────────────────────────────────────────────────────
@@ -62,6 +69,7 @@ export const Board: React.FC<BoardProps> = ({
   onPointPress,
   boardWidth,
   showBearOffRow = true,
+  flipped = false,
 }) => {
   // Compute slot and piece sizes from the actual board width (same on every device).
   // Board contains: 12 slots + 1 center bar. Frame border ≈ 16px total.
@@ -88,7 +96,13 @@ export const Board: React.FC<BoardProps> = ({
   const bearOffBlackActive = finalHighlights.includes(BEAR_OFF_BLACK);
 
   return (
-    <View style={[styles.boardOuter, { width: boardWidth }]}>
+    <View
+      style={[
+        styles.boardOuter,
+        { width: boardWidth },
+        flipped && { transform: [{ rotate: '180deg' }] },
+      ]}
+    >
       {/* ── Bear-off trays (landscape only) ─────────────────────────────
           Order matches player positions: WHITE on the left (top player),
           BLACK on the right (bottom player). In portrait mode the

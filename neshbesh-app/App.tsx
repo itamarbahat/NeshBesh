@@ -233,7 +233,8 @@ const BoardContent: React.FC<{
   boardWidth: number;
   dieSize: number;
   onPointPressOverride?: (index: number) => void;
-}> = ({ isLandscape, boardAnimatedStyle, showEatFlash, lastThrowVelocity, boardWidth, dieSize, onPointPressOverride }) => {
+  flipped?: boolean;
+}> = ({ isLandscape, boardAnimatedStyle, showEatFlash, lastThrowVelocity, boardWidth, dieSize, onPointPressOverride, flipped = false }) => {
   const {
     board, whiteBorneOff, blackBorneOff, selectedIndex,
     intermediateHighlights, finalHighlights, handlePointPress,
@@ -251,6 +252,7 @@ const BoardContent: React.FC<{
         finalHighlights={finalHighlights} onPointPress={pointPress}
         boardWidth={boardWidth}
         showBearOffRow={isLandscape}
+        flipped={flipped}
       />
       <ThrowingDiceOverlay velocity={lastThrowVelocity} dieSize={dieSize} />
     </ReanimatedView.View>
@@ -952,6 +954,7 @@ export default function App() {
               boardWidth={boardWidth}
               dieSize={dieSize}
               onPointPressOverride={wrappedPointPress}
+              flipped={mySign === 1}
             />
           </View>
           <RemoteBottomBar
