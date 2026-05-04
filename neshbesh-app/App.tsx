@@ -109,20 +109,22 @@ const SpecialRollCard: React.FC<{
     phase, message, currentPlayer,
     acknowledgeSkip, choose63, chooseDouble, confirmSpecialResult,
   } = useGameStore();
+  const gameMode = useMultiplayerStore((s) => s.gameMode);
 
   const ack = onAcknowledgeSkip || acknowledgeSkip;
   const ch63 = onChoose63 || choose63;
   const chDbl = onChooseDouble || chooseDouble;
   const cfm = onConfirmSpecial || confirmSpecialResult;
 
-  // Mirror + anchor system alerts toward the active player:
-  //   White (sign=1, top) → rotate 180° and anchor to the top half.
-  //   Black (sign=-1, bottom) → normal orientation, anchor to the bottom half.
+  // In remote two-device mode, every player reads the screen the same way →
+  // anchor to the bottom and never rotate. Local hotseat keeps the original
+  // mirrored anchor toward whichever side the active player sits on.
   const isWhite = currentPlayer === 1;
-  const anchorStyle = isWhite
-    ? { position: 'absolute' as const, top: 16, left: 0, right: 0, transform: [{ rotate: '180deg' as const }] }
-    : { position: 'absolute' as const, bottom: 16, left: 0, right: 0 };
-  const mirroredStyle = anchorStyle;
+  const mirroredStyle = gameMode === 'remote'
+    ? { position: 'absolute' as const, bottom: 16, left: 0, right: 0 }
+    : isWhite
+      ? { position: 'absolute' as const, top: 16, left: 0, right: 0, transform: [{ rotate: '180deg' as const }] }
+      : { position: 'absolute' as const, bottom: 16, left: 0, right: 0 };
 
   if (phase === 'SPECIAL_CHOOSE_DOUBLE') {
     return (
@@ -869,7 +871,7 @@ export default function App() {
       return `Rolls: (${availableDice.join(', ')})`;
     }
     if (phase === 'SPECIAL_NESH_STRIKE_FREE_MOVE') return `NESH STRIKE!`;
-    if (phase === 'WAITING_ROLL') return `Swipe to throw!`;
+    if (phase === 'WAITING_ROLL') return `לחץ לזרוק!`;
     return '';
   };
 

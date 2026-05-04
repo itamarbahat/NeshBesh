@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
 import { useGameStore } from '../store/useGameStore';
+import { useMultiplayerStore } from '../store/useMultiplayerStore';
 
 // ── Die Face for Overlay ──────────────────────────────────────────────────────
 // Every internal measurement (pips, border radius, stroke) is a fraction of
@@ -51,6 +52,8 @@ export const ThrowingDiceOverlay: React.FC<{
   dieSize: number;
 }> = ({ velocity = 1, dieSize }) => {
   const { dice, phase, availableDice, currentPlayer } = useGameStore();
+  const gameMode = useMultiplayerStore((s) => s.gameMode);
+  const mpRole = useMultiplayerStore((s) => s.role);
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   // Tumbling face values shown during the throw — cycled on interval.
@@ -108,11 +111,20 @@ export const ThrowingDiceOverlay: React.FC<{
     }, 70);
 
     const intensity = Math.min(3, Math.max(0.8, velocity));
-    // Directional throw: White (top) flies down from the top edge;
-    // Black (bottom) flies up from the bottom edge.
-    // Landing zone is centred vertically on the board so both throws cover a
-    // symmetric distance — neither player's dice appear to fly off-screen.
-    const fromTop = currentPlayer === 1;
+    // Directional throw.
+    //   Local hotseat: White (top) flies down, Black (bottom) flies up — the
+    //     bar each player throws from is on their physical edge of the board.
+    //   Remote two-device: every player views the screen the same way and
+    //     their tray is at the bottom. Dice come from the bottom when *I*
+    //     roll, from the top when the *opponent* rolls (where their chip is).
+    let fromTop: boolean;
+    if (gameMode === 'remote') {
+      const mySign = mpRole === 'host' ? 1 : -1;
+      // Opponent rolling → dice come from the top (their chip is up there).
+      fromTop = currentPlayer !== mySign;
+    } else {
+      fromTop = currentPlayer === 1;
+    }
     const startX = SW / 2;
     const startY = fromTop ? SH * 0.15 : SH * 0.85;
 

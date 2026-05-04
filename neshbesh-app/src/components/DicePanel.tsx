@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, PanResponder, Dimensions, Animated as RNAnimated, TouchableOpacity } from 'react-native';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+import { View, Text, StyleSheet, Animated as RNAnimated, TouchableOpacity } from 'react-native';
 
 // ── Die Face Component ────────────────────────────────────────────────────────
 // All internal styling (pips, border radius, bevels, outer border) is
@@ -123,14 +121,10 @@ export const DicePanel: React.FC<DicePanelProps> = ({
   const resultSize = dieSize;
   const doubleSize = Math.round(dieSize * 0.87);
   const singleResultSize = Math.round(dieSize * 1.10);
-  const pan = useRef(new RNAnimated.ValueXY()).current;
-  const [isSwiping, setIsSwiping] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
-  // Use refs to avoid stale closures in PanResponder
-  const canRollRef = useRef(canRoll);
+  // Use ref to avoid stale closures in the press handler
   const onRollRef = useRef(onRoll);
-  canRollRef.current = canRoll;
   onRollRef.current = onRoll;
 
   useEffect(() => {
@@ -142,44 +136,10 @@ export const DicePanel: React.FC<DicePanelProps> = ({
     }
   }, [rolledDice, availableDice, singleDie]);
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => canRollRef.current,
-      onPanResponderMove: (e, gestureState) => {
-        if (gestureState.dy < 0) {
-          pan.setValue({ x: gestureState.dx, y: gestureState.dy });
-          setIsSwiping(true);
-        }
-      },
-      onPanResponderRelease: (e, gestureState) => {
-        if (gestureState.dy < -40) {
-          const velocity = Math.abs(gestureState.vy);
-          onRollRef.current(Math.max(velocity, 0.8));
-          RNAnimated.timing(pan, {
-            toValue: { x: gestureState.dx * 2, y: -SCREEN_HEIGHT * 0.6 },
-            duration: Math.max(150, 400 - velocity * 100),
-            useNativeDriver: true,
-          }).start(() => {
-            pan.setValue({ x: 0, y: 0 });
-            setIsSwiping(false);
-          });
-        } else {
-          RNAnimated.spring(pan, {
-            toValue: { x: 0, y: 0 },
-            useNativeDriver: true,
-          }).start(() => setIsSwiping(false));
-        }
-      },
-    })
-  ).current;
-
   return (
     <View style={styles.panel}>
-      {/* Swipe area wrapper */}
-      <View 
-        style={[styles.diceContainer, canRoll && styles.swipeActiveArea]}
-        {...panResponder.panHandlers}
-      >
+      {/* Press area wrapper */}
+      <View style={[styles.diceContainer, canRoll && styles.tapActiveArea]}>
         {rolledDice && showResult && !singleDie ? (
           <View style={styles.diceResultRow}>
             {(() => {
@@ -213,25 +173,25 @@ export const DicePanel: React.FC<DicePanelProps> = ({
               onPress={() => onRollRef.current(1.2)}
               activeOpacity={0.7}
             >
-              <RNAnimated.View style={[
-                styles.readyDice,
-                { transform: [{ translateX: pan.x }, { translateY: pan.y }] }
-              ]}>
+              <View style={styles.readyDice}>
                 <DieFace value={6} size={dieSize} />
-                <Text style={styles.swipePromptText}>לחץ לזרוק</Text>
-              </RNAnimated.View>
+                <Text style={styles.tapPromptText}>לחץ לזרוק</Text>
+              </View>
             </TouchableOpacity>
           ) : (
-            <RNAnimated.View style={[
-              styles.readyDice,
-              { transform: [{ translateX: pan.x }, { translateY: pan.y }] }
-            ]}>
-              <View style={styles.dicePair}>
-                <DieFace value={6} size={dieSize} />
-                <DieFace value={5} size={dieSize} />
+            <TouchableOpacity
+              style={styles.singleDieTapArea}
+              onPress={() => onRollRef.current(1.2)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.readyDice}>
+                <View style={styles.dicePair}>
+                  <DieFace value={6} size={dieSize} />
+                  <DieFace value={5} size={dieSize} />
+                </View>
+                <Text style={styles.tapPromptText}>לחץ לזרוק</Text>
               </View>
-              <Text style={styles.swipePromptText}>SWIPE UP TO THROW</Text>
-            </RNAnimated.View>
+            </TouchableOpacity>
           )
         ) : (
           <View style={styles.waitContainer}>
@@ -256,7 +216,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  swipeActiveArea: {
+  tapActiveArea: {
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     borderWidth: 1,
@@ -276,7 +236,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
-  swipePromptText: {
+  tapPromptText: {
     fontSize: 12,
     color: 'rgba(255,255,255,0.4)',
     fontWeight: 'bold',
