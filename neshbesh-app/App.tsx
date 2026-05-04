@@ -673,6 +673,11 @@ export default function App() {
     score, message, victoryInfo, rollDice, rollSingleDie, endTurn,
     handlePointPress, board, startWithDice, startNewGame,
   } = useGameStore();
+  // Subscribed separately so the host sync effect re-runs when the guest's
+  // click lands on the host's engine and only the highlight arrays change.
+  const selectedIndex = useGameStore((s) => s.selectedIndex);
+  const intermediateHighlights = useGameStore((s) => s.intermediateHighlights);
+  const finalHighlights = useGameStore((s) => s.finalHighlights);
 
   const audio = useAudioManager();
   const { boardAnimatedStyle, triggerFlip } = useTableFlipAnimation();
@@ -715,7 +720,15 @@ export default function App() {
         extraTurn: gs.extraTurn,
       });
     }, 100);
-  }, [phase, dice, availableDice, currentPlayer, board, whiteBorneOff, blackBorneOff, message, mpScreen]);
+  }, [
+    phase, dice, availableDice, currentPlayer, board,
+    whiteBorneOff, blackBorneOff, message, mpScreen,
+    // Highlight arrays must be in deps too — without them, a guest's click
+    // mutates only highlights on the host (no phase/board change), the
+    // effect doesn't re-run, the new highlights never reach Firebase, and
+    // the guest's board never lights up green.
+    selectedIndex, intermediateHighlights, finalHighlights,
+  ]);
 
   // Host: listen for guest actions
   useEffect(() => {
