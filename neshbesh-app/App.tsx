@@ -515,37 +515,42 @@ const HotseatOpeningRollOverlay: React.FC = () => {
 const InitialRollOverlay: React.FC = () => {
   const { myDie, opponentDie, rollMyDie, playerName, opponentName, role } = useMultiplayerStore();
   const startWithDice = useGameStore((s) => s.startWithDice);
-  const [resolving, setResolving] = useState(false);
+  // Ref (not state) so the resolve guard does not re-trigger the effect.
+  // A previous version used `useState(false)` here and listed `resolving` in
+  // the effect deps; setting it to true caused the effect to re-run, the
+  // cleanup cleared the 1500ms timer, and the screen never advanced to 'game'.
+  const resolvingRef = useRef(false);
 
   const myLabel = role === 'host' ? 'לבן' : 'שחור';
   const oppLabel = role === 'host' ? 'שחור' : 'לבן';
 
   // When both have rolled, resolve after a short delay
   useEffect(() => {
-    if (myDie != null && opponentDie != null && !resolving) {
-      setResolving(true);
-      const timer = setTimeout(async () => {
-        if (myDie === opponentDie) {
-          // Tie — re-roll
-          const { roomId } = useMultiplayerStore.getState();
-          if (roomId) await clearInitialDice(roomId);
-          useMultiplayerStore.setState({ myDie: null, opponentDie: null });
-          setResolving(false);
-          return;
-        }
+    if (myDie == null || opponentDie == null) return;
+    if (resolvingRef.current) return;
+    resolvingRef.current = true;
 
-        const { role: r, roomId } = useMultiplayerStore.getState();
-        // Host = White (+1), Guest = Black (-1)
-        // Whoever rolled higher goes first
-        const hostDie = r === 'host' ? myDie : opponentDie;
-        const guestDie = r === 'host' ? opponentDie : myDie;
-        const firstPlayer: PlayerSign = hostDie > guestDie ? 1 : -1;
-        startWithDice(firstPlayer, hostDie, guestDie);
-        useMultiplayerStore.setState({ screen: 'game' });
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [myDie, opponentDie, resolving]);
+    const timer = setTimeout(async () => {
+      if (myDie === opponentDie) {
+        // Tie — re-roll
+        const { roomId } = useMultiplayerStore.getState();
+        if (roomId) await clearInitialDice(roomId);
+        useMultiplayerStore.setState({ myDie: null, opponentDie: null });
+        resolvingRef.current = false;
+        return;
+      }
+
+      const { role: r } = useMultiplayerStore.getState();
+      // Host = White (+1), Guest = Black (-1)
+      // Whoever rolled higher goes first
+      const hostDie = r === 'host' ? myDie : opponentDie;
+      const guestDie = r === 'host' ? opponentDie : myDie;
+      const firstPlayer: PlayerSign = hostDie > guestDie ? 1 : -1;
+      startWithDice(firstPlayer, hostDie, guestDie);
+      useMultiplayerStore.setState({ screen: 'game' });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [myDie, opponentDie, startWithDice]);
 
   const resultText = myDie != null && opponentDie != null
     ? myDie === opponentDie
