@@ -2,7 +2,7 @@
 
 **NeshBesh** is a mobile backgammon game with a twisted set of custom dice rules, built with React Native + Expo. It's a digital adaptation of a house-rules variant of Shesh-Besh (שש-בש) played in Israel — where certain dice combinations trigger special mechanics ranging from forced backwards moves to the devastating "Nesh Strike."
 
-🎮 **Play now (web build):** https://nesh-besh-git-master-itamarbahats-projects.vercel.app/
+🎮 **Play now (web build):** https://nesh-besh.vercel.app/
 
 ---
 
