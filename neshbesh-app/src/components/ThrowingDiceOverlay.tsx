@@ -1,7 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Animated, Easing, useWindowDimensions, LayoutChangeEvent } from 'react-native';
 import { useGameStore } from '../store/useGameStore';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
+import { useAudioManager } from '../audio/useAudioManager';
+import { BOARD_ASPECT, getOccupancyRects, type Rect } from './boardConstants';
+import {
+  BOARD_DIE_SCALE,
+  LANDING_POP_MS,
+  LANDING_POP_SCALE,
+  getRollDurationMs,
+  pickPairLandingPoints,
+} from '../animations/diceConstants';
 
 // ── Die Face for Overlay ──────────────────────────────────────────────────────
 // Every internal measurement (pips, border radius, stroke) is a fraction of
@@ -42,23 +51,32 @@ const DieFace: React.FC<{ value: number; size: number }> = ({ value, size }) => 
 
 // ── Throwing Dice Overlay ─────────────────────────────────────────────────────
 // Dice fly from the active player's edge of the screen toward the board
-// centre: White (top) throws downward, Black (bottom) throws upward. They
-// shrink mid-flight, land on the board, and persist until the player completes
-// the move (dice exhausted / turn ends).
+// centre and land on empty board surface (collision-aware via occupancy
+// rejection sampling). Roll duration is randomized per throw on
+// [ROLL_DURATION_MIN_MS, ROLL_DURATION_MAX_MS] so each roll feels different.
+// On landing, dice pop up briefly (LANDING_POP_SCALE) before settling, and
+// the shake/land SFX layers mirror the same timing.
 export const ThrowingDiceOverlay: React.FC<{
   velocity?: number;
   /** Die pixel size while in flight/landed. Derived from the board's
    *  pieceSize at the App layer so it stays proportional across devices. */
   dieSize: number;
 }> = ({ velocity = 1, dieSize }) => {
-  const { dice, phase, availableDice, currentPlayer } = useGameStore();
+  const { dice, phase, board } = useGameStore();
   const gameMode = useMultiplayerStore((s) => s.gameMode);
   const mpRole = useMultiplayerStore((s) => s.role);
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const audio = useAudioManager();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   // Tumbling face values shown during the throw — cycled on interval.
   const [tumbleFaces, setTumbleFaces] = useState<[number, number]>([1, 1]);
   const tumbleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Overlay's own measured frame (board-local coord space). Captured via
+  // onLayout so landing math stays accurate regardless of bear-off row,
+  // safe-area insets, or orientation.
+  const layoutRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
   const { width: SW, height: SH } = useWindowDimensions();
 
@@ -80,6 +98,8 @@ export const ThrowingDiceOverlay: React.FC<{
   ];
 
   const prevDiceRef = useRef(dice);
+  // Stored so audio (shake) can read the same value the flight uses.
+  const lastRollDurationRef = useRef<number>(0);
 
   // When dice change → new throw animation
   useEffect(() => {
@@ -98,6 +118,11 @@ export const ThrowingDiceOverlay: React.FC<{
     }
   }, [phase]);
 
+  const onLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    layoutRef.current = { width, height };
+  };
+
   const animateThrow = (values: [number, number]) => {
     setAnimating(true);
     setLandedDice(null);
@@ -110,7 +135,6 @@ export const ThrowingDiceOverlay: React.FC<{
       setTumbleFaces([randFace(), randFace()]);
     }, 70);
 
-    const intensity = Math.min(3, Math.max(0.8, velocity));
     // Directional throw.
     //   Local hotseat: White (top) flies down, Black (bottom) flies up — the
     //     bar each player throws from is on their physical edge of the board.
@@ -120,35 +144,51 @@ export const ThrowingDiceOverlay: React.FC<{
     let fromTop: boolean;
     if (gameMode === 'remote') {
       const mySign = mpRole === 'host' ? 1 : -1;
-      // Opponent rolling → dice come from the top (their chip is up there).
       fromTop = currentPlayer !== mySign;
     } else {
       fromTop = currentPlayer === 1;
     }
-    const startX = SW / 2;
-    const startY = fromTop ? SH * 0.15 : SH * 0.85;
+
+    // Resolve the overlay's measured frame. Fall back to a board-width
+    // estimate when onLayout has not yet fired (first render after mount).
+    const layoutW = layoutRef.current.width || SW;
+    const layoutH = layoutRef.current.height || SH;
+    const frameWidth = layoutW;
+    const frameHeight = Math.min(layoutH, frameWidth / BOARD_ASPECT);
+    const frameTopOffset = Math.max(0, layoutH - frameHeight);
+
+    // Collision-aware landing: rejection-sample two non-overlapping points
+    // that miss every occupied checker stack.
+    const occupied: Rect[] = getOccupancyRects(board, frameWidth, frameHeight);
+    const [pA, pB] = pickPairLandingPoints(frameWidth, frameHeight, dieSize, occupied);
+    const landings = [pA, pB].map(p => ({
+      x: p.x - dieSize / 2,
+      y: p.y + frameTopOffset - dieSize / 2,
+    }));
+
+    // Start position: off-board, on the throwing player's edge of the
+    // overlay. Equal travel distance preserves physics parity.
+    const startX = layoutW / 2 - dieSize / 2;
+    const startY = fromTop ? -dieSize * 2 : layoutH + dieSize;
 
     diceAnims.forEach(a => a.setValue({ x: startX, y: startY }));
     diceRotations.forEach(r => r.setValue(0));
     diceScales.forEach(s => s.setValue(1.6)); // Start large
     diceOpacities.forEach(o => o.setValue(1));
 
-    const animations = diceAnims.map((anim, i) => {
-      const dur = ((420 + Math.random() * 160) / intensity);
-      // Landing zone: centred around the board middle with a lateral spread
-      // across the middle 50% of the screen. The vertical band is biased toward
-      // the *opposite* edge so each throw visually "crosses" the board: White
-      // (top) lands in the lower half of the centre band, Black (bottom) in the
-      // upper half. Equal travel distance preserves physics parity.
-      const landX = SW * 0.25 + Math.random() * SW * 0.5;
-      const landY = fromTop
-        ? SH * 0.45 + Math.random() * SH * 0.15
-        : SH * 0.40 + Math.random() * SH * 0.15;
+    // Randomized roll duration — shared with audio so the shake SFX runs
+    // for exactly the flight window.
+    const rollDurationMs = getRollDurationMs();
+    lastRollDurationRef.current = rollDurationMs;
+    audio.playShakeFor(rollDurationMs);
 
+    const intensity = Math.min(3, Math.max(0.8, velocity));
+
+    const animations = diceAnims.map((anim, i) => {
       return Animated.parallel([
         Animated.timing(anim, {
-          toValue: { x: landX, y: landY },
-          duration: dur,
+          toValue: { x: landings[i].x, y: landings[i].y },
+          duration: rollDurationMs,
           useNativeDriver: true,
           easing: Easing.bezier(0.1, 0.7, 0.2, 1),
         }),
@@ -156,12 +196,12 @@ export const ThrowingDiceOverlay: React.FC<{
           // Mirror tumble direction so White's dice spin counter-clockwise,
           // matching the reversed flight path.
           toValue: (6 + Math.random() * 10) * intensity * (fromTop ? -1 : 1),
-          duration: dur,
+          duration: rollDurationMs,
           useNativeDriver: true,
         }),
         Animated.timing(diceScales[i], {
-          toValue: 1,
-          duration: dur,
+          toValue: BOARD_DIE_SCALE,
+          duration: rollDurationMs,
           useNativeDriver: true,
           easing: Easing.out(Easing.cubic),
         }),
@@ -176,6 +216,26 @@ export const ThrowingDiceOverlay: React.FC<{
       setTumbleFaces(values);
       setLandedDice(values);
       setAnimating(false);
+      // Landing: one thud per roll, plus a brief scale pop on each die.
+      audio.playDiceLand();
+      const popUpMs = 80;
+      const popDownMs = Math.max(40, LANDING_POP_MS - popUpMs);
+      diceScales.forEach(s => {
+        Animated.sequence([
+          Animated.timing(s, {
+            toValue: BOARD_DIE_SCALE * LANDING_POP_SCALE,
+            duration: popUpMs,
+            useNativeDriver: true,
+            easing: Easing.out(Easing.quad),
+          }),
+          Animated.timing(s, {
+            toValue: BOARD_DIE_SCALE,
+            duration: popDownMs,
+            useNativeDriver: true,
+            easing: Easing.out(Easing.quad),
+          }),
+        ]).start();
+      });
     });
   };
 
@@ -187,7 +247,7 @@ export const ThrowingDiceOverlay: React.FC<{
   if (!animating && !landedDice) return null;
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+    <View style={StyleSheet.absoluteFill} pointerEvents="none" onLayout={onLayout}>
       {animating && diceAnims.map((anim, i) => (
         <Animated.View
           key={`throw-${i}`}
@@ -227,7 +287,7 @@ export const ThrowingDiceOverlay: React.FC<{
                     outputRange: ['0deg', '360deg'],
                   })
                 },
-                { scale: 0.95 },
+                { scale: diceScales[i] },
               ],
             },
           ]}
@@ -254,14 +314,14 @@ const styles = StyleSheet.create({
   },
   animatedDie: {
     position: 'absolute',
-    left: -15,
-    top: -15,
+    left: 0,
+    top: 0,
     zIndex: 9999,
   },
   landedDie: {
     position: 'absolute',
-    left: -15,
-    top: -15,
+    left: 0,
+    top: 0,
     zIndex: 9998,
   },
 });

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated as RNAnimated, TouchableOpacity } from 'react-native';
+import { TRAY_DIE_SCALE } from '../animations/diceConstants';
 
 // ── Die Face Component ────────────────────────────────────────────────────────
 // All internal styling (pips, border radius, bevels, outer border) is
@@ -114,6 +115,10 @@ export const DicePanel: React.FC<DicePanelProps> = ({
   singleDie = false,
   dieSize,
 }) => {
+  // Tray dice render at TRAY_DIE_SCALE × the on-board die so the throw
+  // target reads bigger than landed dice. Only size changes — colors,
+  // pip layout, and border radius remain identical.
+  const trayDieSize = Math.round(dieSize * TRAY_DIE_SCALE);
   // Derived sizes — tightened so every variant stays within
   // [0.5, 0.66] × pieceSize given dieSize ≈ 0.6 × pieceSize.
   //   result (1.00) → 0.60×piece     doubles row (0.87) → 0.52×piece
@@ -174,7 +179,7 @@ export const DicePanel: React.FC<DicePanelProps> = ({
               activeOpacity={0.7}
             >
               <View style={styles.readyDice}>
-                <DieFace value={6} size={dieSize} />
+                <DieFace value={6} size={trayDieSize} />
                 <Text style={styles.tapPromptText}>לחץ לזרוק</Text>
               </View>
             </TouchableOpacity>
@@ -186,8 +191,8 @@ export const DicePanel: React.FC<DicePanelProps> = ({
             >
               <View style={styles.readyDice}>
                 <View style={styles.dicePair}>
-                  <DieFace value={6} size={dieSize} />
-                  <DieFace value={5} size={dieSize} />
+                  <DieFace value={6} size={trayDieSize} />
+                  <DieFace value={5} size={trayDieSize} />
                 </View>
                 <Text style={styles.tapPromptText}>לחץ לזרוק</Text>
               </View>

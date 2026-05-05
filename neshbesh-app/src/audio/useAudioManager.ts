@@ -4,8 +4,18 @@
  * Uses expo-av for playback. Each sound is loaded lazily on first use and
  * cached for subsequent plays. Provides fire-and-forget `play*` methods.
  *
- * To swap in real audio assets later, replace the `require(...)` paths
- * in the SOUND_ASSETS map below.
+ * Dice polish layer:
+ *   • playShakeFor(ms) starts the shake loop and stops it after `ms`, with
+ *     ±8% pitch modulation every ~150ms for generative texture.
+ *   • playDiceLand() fires the percussive landing thud once per roll.
+ *   • playCheckerClick() is the soft tick for a successful checker move.
+ *
+ * Audio assets:
+ *   - rollDice / movePiece / eatPiece / etc. remain `null` placeholders
+ *     until real assets are wired in.
+ *   - The dice-polish layer points at `assets/sfx/*.wav` files generated
+ *     by `scripts/generate-sfx.py` (or its TS twin). Both are placeholders
+ *     and may be swapped for real assets without touching this file.
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { Audio, AVPlaybackSource } from 'expo-av';
@@ -17,16 +27,11 @@ export type SoundEvent =
   | 'eatPiece'
   | 'championshipWin'
   | 'specialRoll'
-  | 'tableFlip';
+  | 'tableFlip'
+  | 'diceShake'
+  | 'diceLand'
+  | 'checkerClick';
 
-/**
- * Sound asset map — replace these URIs with bundled `require('../assets/audio/x.mp3')`
- * once you have real audio files. For now we use freely available sound-effect
- * generator URLs as placeholders.
- *
- * The structure allows easy hot-swapping:
- *   SOUND_ASSETS.rollDice = require('../assets/audio/dice_roll.mp3');
- */
 const SOUND_ASSETS: Record<SoundEvent, AVPlaybackSource | null> = {
   rollDice: null,
   movePiece: null,
@@ -34,11 +39,23 @@ const SOUND_ASSETS: Record<SoundEvent, AVPlaybackSource | null> = {
   championshipWin: null,
   specialRoll: null,
   tableFlip: null,
+  diceShake: require('../../assets/sfx/dice-shake-loop.wav'),
+  diceLand: require('../../assets/sfx/dice-land.wav'),
+  checkerClick: require('../../assets/sfx/checker-click.wav'),
 };
 
 // ── Singleton sound cache ─────────────────────────────────────────────────────
 const soundCache: Partial<Record<SoundEvent, Audio.Sound>> = {};
 let audioModeConfigured = false;
+
+// Shake-specific runtime state — owned at module scope so a new shake call
+// can cleanly stop a previous one even if the React component remounts.
+const shakeState: {
+  sound: Audio.Sound | null;
+  stopTimer: ReturnType<typeof setTimeout> | null;
+  rateTimer: ReturnType<typeof setInterval> | null;
+  generation: number;
+} = { sound: null, stopTimer: null, rateTimer: null, generation: 0 };
 
 async function ensureAudioMode() {
   if (audioModeConfigured) return;
@@ -83,6 +100,63 @@ async function playSound(event: SoundEvent, volume = 1.0): Promise<void> {
   }
 }
 
+// ── Shake / land / click implementations ────────────────────────────────────
+async function stopShakeInternal(): Promise<void> {
+  if (shakeState.stopTimer) { clearTimeout(shakeState.stopTimer); shakeState.stopTimer = null; }
+  if (shakeState.rateTimer) { clearInterval(shakeState.rateTimer); shakeState.rateTimer = null; }
+  const s = shakeState.sound;
+  shakeState.sound = null;
+  if (s) {
+    try { await s.stopAsync(); } catch {}
+    try { await s.unloadAsync(); } catch {}
+  }
+  // Drop the cache entry too — we always create a fresh shake sound so
+  // looping/rate-state never carries between rolls.
+  if (soundCache.diceShake) {
+    delete soundCache.diceShake;
+  }
+}
+
+async function playShakeForInternal(durationMs: number): Promise<void> {
+  // Cancel any in-flight shake so we never overlap loops.
+  await stopShakeInternal();
+  const generation = ++shakeState.generation;
+  const asset = SOUND_ASSETS.diceShake;
+  if (!asset) return;
+  try {
+    await ensureAudioMode();
+    const { sound } = await Audio.Sound.createAsync(asset, {
+      shouldPlay: false,
+      isLooping: true,
+      volume: 0.55,
+    });
+    if (generation !== shakeState.generation) {
+      // Superseded while loading — clean up.
+      try { await sound.unloadAsync(); } catch {}
+      return;
+    }
+    shakeState.sound = sound;
+    await sound.setPositionAsync(0);
+    await sound.playAsync();
+
+    // Pitch modulation: ±8% rate change every ~150ms. `correctPitch: false`
+    // shifts pitch with rate so the rattle gains generative variation.
+    shakeState.rateTimer = setInterval(() => {
+      const s = shakeState.sound;
+      if (!s) return;
+      const rate = 1 + (Math.random() * 0.16 - 0.08);
+      s.setRateAsync(rate, false).catch(() => {});
+    }, 150);
+
+    shakeState.stopTimer = setTimeout(() => {
+      // Only stop if we're still the active shake.
+      if (generation === shakeState.generation) stopShakeInternal();
+    }, durationMs);
+  } catch {
+    // Non-critical
+  }
+}
+
 // ── Public hook ───────────────────────────────────────────────────────────────
 
 export interface AudioManager {
@@ -92,6 +166,9 @@ export interface AudioManager {
   playChampionshipWin: () => void;
   playSpecialRoll: () => void;
   playTableFlip: () => void;
+  playShakeFor: (durationMs: number) => void;
+  playDiceLand: () => void;
+  playCheckerClick: () => void;
 }
 
 /**
@@ -141,6 +218,18 @@ export function useAudioManager(): AudioManager {
     playSound('tableFlip', 0.9);
   }, []);
 
+  const playShakeFor = useCallback((durationMs: number) => {
+    playShakeForInternal(durationMs);
+  }, []);
+
+  const playDiceLand = useCallback(() => {
+    playSound('diceLand', 0.85);
+  }, []);
+
+  const playCheckerClick = useCallback(() => {
+    playSound('checkerClick', 0.55);
+  }, []);
+
   return {
     playRollDice,
     playMovePiece,
@@ -148,6 +237,9 @@ export function useAudioManager(): AudioManager {
     playChampionshipWin,
     playSpecialRoll,
     playTableFlip,
+    playShakeFor,
+    playDiceLand,
+    playCheckerClick,
   };
 }
 
@@ -171,6 +263,7 @@ export function setSoundAsset(event: SoundEvent, source: AVPlaybackSource): void
  * Cleanup all cached sounds. Call once on app shutdown if needed.
  */
 export async function unloadAllSounds(): Promise<void> {
+  await stopShakeInternal();
   const events = Object.keys(soundCache) as SoundEvent[];
   await Promise.all(
     events.map(async (e) => {

@@ -809,6 +809,10 @@ export default function App() {
   }, [mpIsMultiplayer, mpRole, mpRoomId, mpScreen]);
 
   useEffect(() => {
+    // Roll SFX: kept as a one-shot transient at throw start (asset is `null`
+    // so it's a no-op today). The audible roll sound is the continuous shake
+    // started inside ThrowingDiceOverlay via `playShakeFor(rollDurationMs)`,
+    // which spans the exact flight window. The two layers do not clash.
     if (dice && (!prevDiceRef.current || dice[0] !== prevDiceRef.current[0] || dice[1] !== prevDiceRef.current[1])) {
        audio.playRollDice();
     }
@@ -821,8 +825,14 @@ export default function App() {
       setShowEatFlash(true);
       setTimeout(() => setShowEatFlash(false), 400);
     }
+    // Move SFX layering: `playMovePiece` is a no-op placeholder today; the
+    // user-perceived sound is the new `playCheckerClick`. Both are kept so a
+    // real `movePiece` asset can be dropped in later without re-wiring.
+    // Click is gated on phase === 'MOVING' so it never fires on opening-roll
+    // selections, and `Captured` messages route to `playEatPiece` instead.
     if (message !== prevMessageRef.current && phase === 'MOVING' && message && !message.includes('Captured')) {
       audio.playMovePiece();
+      audio.playCheckerClick();
     }
     prevPhaseRef.current = phase;
     prevMessageRef.current = message;

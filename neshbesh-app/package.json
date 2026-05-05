@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "sfx:generate": "node --loader ts-node/esm scripts/generate-sfx.ts || npx ts-node scripts/generate-sfx.ts"
   },
   "dependencies": {
     "babel-preset-expo": "~54.0.10",
