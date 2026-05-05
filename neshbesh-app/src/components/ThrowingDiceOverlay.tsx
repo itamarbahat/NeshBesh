@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Animated, Easing, useWindowDimensions, LayoutChangeEvent } from 'react-native';
 import { useGameStore } from '../store/useGameStore';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
-import { useAudioManager } from '../audio/useAudioManager';
 import { BOARD_ASPECT, BOARD_FROZEN, getOccupancyRects, type Rect } from './boardConstants';
 import {
   BOARD_DIE_SCALE,
@@ -73,7 +72,6 @@ export const ThrowingDiceOverlay: React.FC<{
   const currentPlayer = useGameStore((s) => s.currentPlayer);
   const gameMode = useMultiplayerStore((s) => s.gameMode);
   const mpRole = useMultiplayerStore((s) => s.role);
-  const audio = useAudioManager();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   // Tumbling face values shown during the throw — cycled on interval.
@@ -242,7 +240,6 @@ export const ThrowingDiceOverlay: React.FC<{
     // matches what the audio and tumble loop expect.
     const flightMs = Math.min(sim.simDurationMs || getRollDurationMs(), ROLL_HARD_CAP_MS);
     lastRollDurationRef.current = flightMs;
-    audio.playShakeFor(flightMs);
 
     // Initial transform values (top-left corner coords for the View).
     const initialA = sim.framesA[0];
@@ -262,20 +259,9 @@ export const ThrowingDiceOverlay: React.FC<{
     const totalFrames = sim.framesA.length;
     const frameDt = PHYSICS_FRAME_DT_MS;
 
-    // Audio scheduling cursors — advanced as the playback frameIdx crosses
-    // each event's frame index. US-012 collision, US-014 per-die land.
-    let collisionCursor = 0;
-    let dieALandFired = false;
-    let dieBLandFired = false;
-
-    // Per-die roll cue. With the US-015 Path-A asset (a real ~70 s
-    // multi-throw recording shared by both dice), firing twice would just
-    // restart the same Sound instance and stomp the first fire. Keep a
-    // single trigger; the user's recording already has the natural texture
-    // of two physical dice baked in. The second-die slot is preserved in
-    // the API so a future per-die-index Sound cache can light it up
-    // without changing call sites.
-    audio.playDieRoll(0, flightMs);
+    // Audio system removed — no collision / per-die land cues here. The
+    // simulator still records `collisionFrames` / `restFrameA` /
+    // `restFrameB`, available if a future visual cue needs them.
 
     const tick = () => {
       const elapsed = Date.now() - t0;
@@ -286,25 +272,6 @@ export const ThrowingDiceOverlay: React.FC<{
       diceAnims[1].setValue({ x: fB.x - half, y: fB.y + frameTopOffset - half });
       diceRotations[0].setValue(fA.theta);
       diceRotations[1].setValue(fB.theta);
-
-      // US-012: fire collision SFX as we cross each pre-computed
-      // collision frame. The audio layer's COLLISION_MIN_GAP_MS is the
-      // last line of defence against rapid skim contacts.
-      while (collisionCursor < sim.collisionFrames.length
-             && sim.collisionFrames[collisionCursor] <= frameIdx) {
-        audio.playDieCollision();
-        collisionCursor++;
-      }
-
-      // US-014: fire per-die land SFX when each die individually settles.
-      if (!dieALandFired && frameIdx >= sim.restFrameA) {
-        audio.playDieLand(0);
-        dieALandFired = true;
-      }
-      if (!dieBLandFired && frameIdx >= sim.restFrameB) {
-        audio.playDieLand(1);
-        dieBLandFired = true;
-      }
 
       if (elapsed >= flightMs) {
         // Hard-snap to final pose (US-009): the simulation may have
@@ -345,8 +312,7 @@ export const ThrowingDiceOverlay: React.FC<{
     setTumbleFaces(values);
     setLandedDice(values);
     setAnimating(false);
-    // Landing: one thud per roll, plus a brief scale pop on each die.
-    audio.playDiceLand();
+    // Landing: brief scale pop on each die. Audio layer removed.
     const popUpMs = 80;
     const popDownMs = Math.max(40, LANDING_POP_MS - popUpMs);
     diceScales.forEach(s => {

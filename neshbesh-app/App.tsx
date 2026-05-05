@@ -32,7 +32,6 @@ import { ThrowingDiceOverlay } from './src/components/ThrowingDiceOverlay';
 import { RemoteBottomBar } from './src/components/RemoteBottomBar';
 import { OpponentHeaderChip } from './src/components/OpponentHeaderChip';
 import { useTableFlipAnimation } from './src/animations';
-import { useAudioManager } from './src/audio/useAudioManager';
 import { PlayerSign } from './src/types';
 
 // ... (ScoreModal, ChoiceOverlay, DoubleChoiceOverlay, BorneBadge, EatImpactFlash remain same)
@@ -721,7 +720,6 @@ export default function App() {
   const intermediateHighlights = useGameStore((s) => s.intermediateHighlights);
   const finalHighlights = useGameStore((s) => s.finalHighlights);
 
-  const audio = useAudioManager();
   const { boardAnimatedStyle, triggerFlip } = useTableFlipAnimation();
   const prevPhaseRef = useRef(phase);
   const prevMessageRef = useRef(message);
@@ -849,38 +847,16 @@ export default function App() {
   }, [mpIsMultiplayer, mpRole, mpRoomId, mpScreen]);
 
   useEffect(() => {
-    // Roll SFX: kept as a one-shot transient at throw start (asset is `null`
-    // so it's a no-op today). The audible roll sound is the continuous shake
-    // started inside ThrowingDiceOverlay via `playShakeFor(rollDurationMs)`,
-    // which spans the exact flight window. The two layers do not clash.
-    if (dice && (!prevDiceRef.current || dice[0] !== prevDiceRef.current[0] || dice[1] !== prevDiceRef.current[1])) {
-       audio.playRollDice();
-    }
+    // Audio system removed — game runs silent. This effect now only drives
+    // the visual side-effects that previously sat alongside SFX: the table
+    // flip animation trigger on phase change, and the eat-impact red flash
+    // on capture.
     if (phase === 'TABLE_FLIP' && prevPhaseRef.current !== 'TABLE_FLIP') {
-      audio.playTableFlip();
       triggerFlip();
     }
     if (message && message.includes('Captured') && message !== prevMessageRef.current) {
-      audio.playEatPiece();
       setShowEatFlash(true);
       setTimeout(() => setShowEatFlash(false), 400);
-    }
-    // Move SFX layering: `playMovePiece` is a no-op placeholder today; the
-    // user-perceived sound is the new `playCheckerClick`. Both are kept so a
-    // real `movePiece` asset can be dropped in later without re-wiring.
-    // Click is gated on phase === 'MOVING' so it never fires on opening-roll
-    // selections, and `Captured` messages route to `playEatPiece` instead.
-    if (message !== prevMessageRef.current && phase === 'MOVING' && message && !message.includes('Captured')) {
-      audio.playMovePiece();
-      audio.playCheckerClick();
-    }
-    // US-013: dedicated bear-off cue. The `Borne off!` message string is the
-    // single source of truth for a successful bear-off (set in the store
-    // alongside the borne-off counter increment). The 5:1 four-move special
-    // emits this message exactly once per bear-off as well, so this fires
-    // once per checker leaving the board regardless of pip arithmetic.
-    if (message !== prevMessageRef.current && message === 'Borne off!') {
-      audio.playBearOff();
     }
     prevPhaseRef.current = phase;
     prevMessageRef.current = message;
