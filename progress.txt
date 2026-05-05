@@ -173,3 +173,326 @@
 - Typecheck status: NOT verified locally — `node`/`npm`/`tsc` are not on
   PATH in this dev environment. User should run `npx tsc --noEmit` from
   `neshbesh-app/` to verify.
+
+---
+
+## PRD.md — UI Performance, Dice Physics, Audio & Static Board (2026-05-05)
+
+> Active PRD. Prior engine/rules PRD archived as `PRD-engine-rules.md`.
+> Release window: 2026-06-10.
+
+### Open questions resolved during clarification
+- **Lag scope** — Click-1 tap-to-select is the primary symptom; cross-platform
+  60 fps target; treated as a recent regression to bisect-and-fix.
+- **Dice physics** — 3 s hard cap (snap to final pose if overrun); elastic
+  walls; dice-on-dice collision enabled; pip-indicator region treated as a
+  forbidden landing zone.
+- **Audio** — staggered per-die triggers for roll / land / collision; new
+  bear-off SFX; reference recording supplied by user out-of-band; placeholder
+  fallback preserved until US-015 swap.
+- **Static board** — applies to BOTH local hotseat and remote two-device
+  modes. Board container fixed-center; chrome reflows or overlays without
+  translating the board.
+
+### Implementation notes (2026-05-05)
+
+- **US-001 — regression diagnosis.** Click-1 lag is React render storm,
+  not engine. The `5fe6a8d` engine path-search cache (`resetMoveCache` +
+  `_moveCache`) is intact and effective (µs cost on cache hit). The
+  visible lag is in component render: every `selectedIndex` /
+  `intermediateHighlights` / `finalHighlights` update re-rendered all
+  24 `<Slot>` SVG cones + ≤7 `<Piece>` per slot because none of `Slot`,
+  `BarSlot`, `Piece` were `React.memo`-wrapped, and `BoardContent` in
+  [App.tsx](neshbesh-app/App.tsx) destructured the full `useGameStore()`
+  state — so any unrelated store mutation (dice, message, phase, score,
+  doublesCount) re-rendered the whole board subtree.
+- **US-002 — fix.**
+  - [Piece.tsx](neshbesh-app/src/components/Piece.tsx): renamed inner
+    function to `PieceImpl`, exported `Piece = React.memo(PieceImpl)`.
+  - [Slot.tsx](neshbesh-app/src/components/Slot.tsx): same memo pattern
+    for `Slot` and `BarSlot`; replaced inline
+    `() => onPress(index)` with a `useCallback`-stabilised `handlePress`
+    so the memo isn't busted by a fresh closure each render.
+  - [App.tsx](neshbesh-app/App.tsx) `BoardContent`: replaced the full
+    `useGameStore()` destructure with seven narrowed selectors
+    (`board`, `whiteBorneOff`, `blackBorneOff`, `selectedIndex`,
+    `intermediateHighlights`, `finalHighlights`, `handlePointPress`),
+    so the component only re-renders on board-relevant slices.
+- **US-003 — narrow subscriptions.** `ThrowingDiceOverlay`,
+  `OpponentHeaderChip`, and `RemoteBottomBar` were already on narrowed
+  selectors (the original PRD-engine-rules progress note was stale).
+  Verified each component's selector list matches the fields it
+  actually renders:
+  - `ThrowingDiceOverlay`: `dice`, `phase`, `board`, `currentPlayer`
+    (engine), `gameMode`, `role` (multiplayer). `board` is needed for
+    `getOccupancyRects` collision-aware landing math; `currentPlayer`
+    drives throw direction.
+  - `OpponentHeaderChip`: `currentPlayer`, `phase`, `whiteBorneOff`,
+    `blackBorneOff`, plus `opponentName` from multiplayer.
+  - `RemoteBottomBar`: `currentPlayer`, `whiteBorneOff`, `blackBorneOff`,
+    `phase`, `dice`, `availableDice`, `board`, `backward`, `endTurn`.
+    `board` and `backward` are needed for `currentPlayerHasLegalMoves`
+    which drives the conditional No-moves/End button.
+- **US-004 — static board, local hotseat.**
+  - [App.tsx](neshbesh-app/App.tsx) `CenteredDiceBar` (landscape):
+    refactored from "single instance, conditional on currentPlayer"
+    to **sided** — accepts `playerSign: 1 | -1` and renders an idle
+    placeholder of equivalent reserved height when not the active
+    player. The landscape `centerStage` now mounts both
+    `<CenteredDiceBar playerSign={1} />` and
+    `<CenteredDiceBar playerSign={-1} />` on every turn so the column's
+    total content height (whiteBar + board + blackBar) is constant.
+    Reserved panel height is `Math.max(56, dieSize * 1.6 + 24)` to
+    cover the active DicePanel's tray scale.
+    Subscriptions on `CenteredDiceBar` were also narrowed in the same
+    pass.
+  - `PlayerDiceBar` (portrait): subscriptions narrowed; `playerBar`
+    style gained `minHeight: 96` so DicePanel content transitions
+    (waiting → rolled-result → no-moves) no longer reflow the parent
+    `mainContent` flex column and shift the board.
+- **US-005 — static board, remote two-device.**
+  - [OpponentHeaderChip.tsx](neshbesh-app/src/components/OpponentHeaderChip.tsx)
+    `chip` style gained `minHeight: 50` so opponent activity
+    transitions (idle ↔ Rolling… ↔ Thinking…) reserve constant
+    vertical space.
+  - [RemoteBottomBar.tsx](neshbesh-app/src/components/RemoteBottomBar.tsx)
+    `bar` style gained `minHeight: 96` so my-turn ↔ opponent-turn
+    transitions don't reflow the board.
+- **US-006 — chrome reflow audit checklist.** See "Manual Test Plan
+  · Static-Board Audit" below. Each row records the board's measured
+  top-left in two states; the `0 px Δ` column must be 0 in every row.
+  Measurement to be performed with React Native's `findNodeHandle` +
+  `measureInWindow` or by overlaying a fixed reference at the screen
+  center and verifying the board edge stays aligned.
+
+- **US-007 / US-008 / US-009 / US-010 — dice physics rewrite.** The
+  prior `Animated.timing` flight (linear lerp from off-screen to a
+  pre-picked landing point) was replaced with a deterministic 2D rigid
+  body simulator in
+  [diceConstants.ts](neshbesh-app/src/animations/diceConstants.ts):
+  - New constants: `PHYSICS_RESTITUTION` (0.55), `PHYSICS_FRICTION_PER_FRAME`
+    (0.965), `PHYSICS_ANGULAR_FRICTION_PER_FRAME` (0.955),
+    `PHYSICS_REST_VELOCITY` (0.015 px/ms), `PHYSICS_REST_ANGULAR`
+    (0.0008 rad/ms), `PHYSICS_FRAME_DT_MS` (16), `ROLL_HARD_CAP_MS` (3000).
+  - `ROLL_DURATION_MAX_MS` lowered from 4000 → 3000 (US-009).
+  - `simulateDiceFlight(opts)` time-steps two `RigidBody` instances at
+    16 ms/frame for ≤188 frames. Per frame: integrate position +
+    rotation, `clampToWalls` reflects velocity at board edges
+    (US-007), `clampToForbiddenRects` reflects along the shallowest
+    axis when overlapping any checker stack or the bar strip (US-010),
+    and `resolveDieDie` applies elastic circle-circle response with
+    impulse exchanged along the contact normal (US-008). Friction
+    decays velocity each step. Per-die rest detection feeds the
+    staggered audio cues in US-014.
+  - Returns `framesA[]`, `framesB[]`, `collisionFrames[]`,
+    `bounceFramesA[]`, `bounceFramesB[]`, `restFrameA`, `restFrameB`.
+    If both dice settle before the cap, remaining frames freeze at the
+    rest pose so the renderer can drive a fixed-length animation
+    without branching. If motion never converges within
+    `ROLL_HARD_CAP_MS`, the last frame holds the final pose and the
+    renderer hard-snaps to it (US-009 acceptance).
+  - [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx):
+    `animateThrow` now runs `simulateDiceFlight` before any rendering,
+    then drives a JS-thread `requestAnimationFrame` tick that pumps
+    sampled poses into `Animated.Value` instances via `setValue`. Tick
+    handle stored in `tickHandleRef` so a fresh roll cancels the
+    previous simulation cleanly (`cancelTick`). The rotation
+    interpolation was rewritten from "tumble revolutions → degrees"
+    to "radians → degrees" (`inputRange: [-π, π], outputRange:
+    ['-180deg', '180deg'], extrapolate: 'extend'`) to render physics
+    output correctly. `Easing` import retained for the in-flight scale
+    timing, which still uses the native driver. `pickPairLandingPoints`
+    is no longer called from this file but remains exported for any
+    future static-target use.
+  - Forbidden rects fed to the simulator: every occupied checker stack
+    (existing `getOccupancyRects` output) plus a permanent bar strip
+    rect of width `BOARD_FROZEN.BAR_WIDTH_RATIO × innerW` and full
+    inner-board height. Dice now physically bounce off the bar like a
+    real backgammon set's wooden ridge (US-010).
+- **US-011 — audio API per-die surface.**
+  [useAudioManager.ts](neshbesh-app/src/audio/useAudioManager.ts):
+  - Added events `dieRoll`, `dieLand`, `dieCollision`, `bearOff` to
+    `SoundEvent` and `SOUND_ASSETS` (all `null` until US-015).
+  - `AudioManager` interface gained `playDieRoll(idx, durationMs)`,
+    `playDieLand(idx)`, `playDieCollision()`, `playBearOff()`.
+  - Each method uses the existing `playSound` no-op-on-null path so a
+    missing asset silently does nothing — matches the
+    `playRollDice` / `playMovePiece` pattern from PRD-dice-polish.
+  - Module-scope `collisionEarliestMs` rate-limits collision SFX to
+    one trigger per `COLLISION_MIN_GAP_MS` (90 ms). The simulator also
+    has a 6-frame cooldown so the audio limiter is the second line of
+    defence.
+- **US-012 — collision SFX wiring.** The simulator records every
+  discrete contact event in `collisionFrames`; the renderer's tick
+  loop walks a `collisionCursor` and fires `audio.playDieCollision()`
+  as `frameIdx` crosses each entry. No collision SFX fires on
+  single-die phases (impossible — two bodies always simulated) or at
+  rest (`resolveDieDie` returns false on no overlap).
+- **US-013 — bear-off SFX wiring.** Side effect on the existing
+  `useEffect([phase, message, dice])` in
+  [App.tsx](neshbesh-app/App.tsx): when `message === 'Borne off!'`
+  and the message changed since last tick, fire `audio.playBearOff()`.
+  This single signal covers regular bear-off, doubles bear-off, and
+  the 5:1 four-move special (each emits the same message string per
+  successful bear-off in `handlePointPress`).
+- **US-014 — staggered per-die roll/land triggers.**
+  - At throw start, `audio.playDieRoll(0, flightMs)` fires
+    immediately and `playDieRoll(1, …)` fires after a 30–120 ms
+    randomized stagger so the two dice never sample-lock.
+  - Per-die land cues fire when the playback `frameIdx` crosses each
+    die's `restFrameA` / `restFrameB`, which differ naturally because
+    the simulator detects each body's rest state independently.
+  - Legacy `playShakeFor` and `playDiceLand` now early-return when
+    their per-die counterparts have non-null assets, so once US-015
+    lands real `dieRoll` / `dieLand` files, the legacy layer falls
+    silent automatically with no further wiring needed.
+- **Typecheck status.** NOT verified locally — `node`, `npx`, and
+  `tsc` are not on PATH in this Windows dev environment (verified by
+  `Get-Command` and bash `which`). User should run
+  `npx tsc --noEmit` from `neshbesh-app/` to verify.
+
+- **US-015 — reference recordings (Path A).** User chose to wire the
+  raw MP3 references in directly and play them at low volume rather
+  than synthesize new placeholders.
+  - Files copied:
+    `.claude/sounds/dice shrowing sound.mp3`
+      → `neshbesh-app/assets/sfx/dice-throw.mp3`
+    `.claude/sounds/moving sound.mp3`
+      → `neshbesh-app/assets/sfx/checker-move.mp3`
+  - `useAudioManager.ts` `SOUND_ASSETS` rewired:
+    `dieRoll` → `dice-throw.mp3` (vol 0.25 die0 / 0.18 die1),
+    `checkerClick` → `checker-move.mp3` (vol 0.30),
+    `bearOff` → `bear-off.wav` (new procedural bell — vol 0.55),
+    `dieCollision` → `die-collision.wav` (new procedural tick —
+      vol 0.40),
+    `dieLand`, `diceShake`, `diceLand`, `movePiece` → `null` so no
+    layer double-triggers with the user's recordings.
+  - `scripts/generate-sfx.py` extended with `make_bear_off_chime()`
+    (660/990/1320 Hz bell with 12 ms attack ramp + 5.5 decay rate) and
+    `make_die_collision_tick()` (4.5 kHz bandpassed 50 ms noise burst).
+    Outputs deterministic via `random.seed(0xBE5)` so any rerun
+    produces byte-identical WAVs.
+  - **Multi-throw bleed handling.** The user's `dice-throw.mp3` is
+    ~70 s of continuous throws back-to-back. Each `playDieRoll` resets
+    the cached `Sound` to position 0 so each trigger plays the first
+    throw segment. A new module-scope `dieRollStopTimer` schedules a
+    `stopAsync` at `flightMs + 200 ms` so the recording never bleeds
+    into the move phase.
+  - **Stagger trade-off.** US-014's two-fire-stagger was reverted to a
+    single fire in [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx)
+    because the second fire on the same `Sound` instance just stomps
+    the first fire's playhead. The `playDieRoll(idx, ms)` API surface
+    is preserved so a future per-die-index Sound cache can light up
+    die 1's slot without touching call sites.
+  - **Bear-off layering.** Per user request ("הצליל צריך להישמע
+    בכל פעם — לא רק בהוצאת שחקן. בהוצאת שחקן הוסף צליל אחר
+    ושונה מההזזות הרגילות"), every successful checker move plays the
+    moving recording (`checkerClick`), and bear-off layers the new
+    bell chime (`bearOff`) on top. Both fire from the existing
+    `useEffect([phase, message, dice])` in App.tsx — `Borne off!`
+    matches the no-`Captured` branch so `playCheckerClick` fires AND
+    `playBearOff` fires alongside it.
+
+### Manual Test Plan · US-016 Cross-Platform Release Verification
+
+> Run before the 2026-06-10 cut. Record FPS via React Native's perf monitor
+> (Cmd+M / Cmd+D → "Show Perf Monitor") or platform-native profilers.
+
+**TypeScript gate (run first, blocks everything else).**
+- [ ] `cd neshbesh-app && npx tsc --noEmit` — exits 0, no errors
+
+**Per-platform Click-1 FPS** — tap a piece on a mid-game board (≥10 stacked
+checkers across both halves), watch the FPS readout. Pass = sustained ≥60.
+- [ ] iOS phone (iPhone 12 / 13 class)
+- [ ] iOS tablet (any iPad)
+- [ ] Android phone (low-end class — Pixel 4a / equivalent)
+- [ ] Android tablet
+- [ ] Web (Chrome desktop, release build)
+
+**Performance regression checks (US-001 → US-003).**
+- [ ] Tap a piece in starting position — highlights appear without
+  perceptible delay (<16 ms frame budget)
+- [ ] Tap through a complete 4-doubles turn — every Click-1 is smooth
+- [ ] Open Score modal mid-turn — board renders unaffected
+- [ ] Open Info modal mid-turn — board renders unaffected
+- [ ] In remote mode, opponent rolls + thinks while local player views —
+  no jank on local interactions
+
+**Static-board checks (US-004 → US-006).** See "Manual Test Plan ·
+Static-Board Audit (US-006)" below — every Δ row must be 0 px.
+
+**Dice physics checks (US-007 → US-010).**
+- [ ] Roll 20 times in a row — every die's centre stays inside the
+  playing surface (no escape past the wood frame)
+- [ ] Roll until you see two dice contact mid-flight — they visibly
+  bounce off each other (US-008)
+- [ ] Time the longest-feeling roll with a stopwatch — no roll exceeds
+  3.0 s wall-clock from release to fully at-rest (US-009)
+- [ ] Roll on a board with a tall checker stack — neither die settles
+  on top of the stack (US-010 existing); roll repeatedly — neither die
+  settles inside the central bar strip (US-010 new)
+- [ ] Roll a fast throw vs a slow throw — friction visibly differs
+
+**Audio checks (US-011 → US-015).**
+- [ ] Roll dice — hear the user's `dice-throw.mp3` softly; no leftover
+  audio playing 1 s after the dice settle (stop-timer working)
+- [ ] Roll repeatedly in quick succession — each roll restarts the
+  recording at position 0 (no overlap of throw segments)
+- [ ] Move a checker — hear the user's `checker-move.mp3` softly
+- [ ] Bear off a checker — hear the move recording AND the bell chime
+  layered on top (per user spec: distinct cue at bear-off)
+- [ ] Capture (eat) an opponent — capture flash + `playEatPiece` (no-op
+  asset) plays, no double-cue
+- [ ] During a single throw with a visible mid-flight collision — hear
+  the soft tick (rate-limited to one per discrete contact)
+
+**No-regression checks (prior PRDs).**
+- PRD-multiplayer (rows from existing Manual Test Plan):
+  - [ ] Local hotseat byte-equivalence: top `PlayerDiceBar` rotated
+    180° (unchanged), bottom unrotated (unchanged), special-roll cards
+    mirror toward the active player (unchanged)
+  - [ ] Remote two-device flow still routes guest actions through host
+- PRD-engine-rules:
+  - [ ] 1:2 → SKIP unchanged
+  - [ ] 4:5 → DoubleChooser unchanged
+  - [ ] 5:1 four-move + bar entry unchanged
+  - [ ] 6:5 Nesh Strike + bar restriction unchanged
+  - [ ] Bear-off "must advance higher" unchanged
+- PRD-dice-polish:
+  - [ ] Tray dice are larger than landed dice (TRAY_DIE_SCALE 1.6×)
+  - [ ] Landing pop visible on each die
+
+**If anything fails, the breakdown by likely root file:**
+- Click-1 fps fail → re-check `Slot`/`Piece` `React.memo` wrappers and
+  `BoardContent` narrowed selectors in [App.tsx](neshbesh-app/App.tsx)
+- Board shifts vertically → check `playerBar.minHeight: 96`,
+  `centeredDiceBar`'s sided render, `OpponentHeaderChip.chip.minHeight: 50`,
+  `RemoteBottomBar.bar.minHeight: 96`
+- Dice escape board / settle on bar → check the simulator's `walls` and
+  `forbiddenRects` in [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx)
+- Roll exceeds 3 s → simulator `ROLL_HARD_CAP_MS` and `flightMs` clamp
+- Audio bleed → `dieRollStopTimer` in
+  [useAudioManager.ts](neshbesh-app/src/audio/useAudioManager.ts)
+
+### Manual Test Plan · Static-Board Audit (US-006)
+
+Local hotseat — portrait:
+- [ ] White → Black turn switch: board top-left Δ = 0 px
+- [ ] Special-roll card open (1:2 SKIP) → close: Δ = 0 px
+- [ ] Special-roll card open (4:5 chooser) → close: Δ = 0 px
+- [ ] Special-roll card open (6:3 choice) → close: Δ = 0 px
+- [ ] No-legal-moves End button appears → move executed: Δ = 0 px
+- [ ] HotseatOpeningRollOverlay open → close: not relevant (full-screen)
+
+Local hotseat — landscape:
+- [ ] White → Black turn switch: board top-left Δ = 0 px
+- [ ] Black → White turn switch: board top-left Δ = 0 px
+- [ ] No-legal-moves End button appears on either side: Δ = 0 px
+- [ ] Special-roll card open / close: Δ = 0 px
+
+Remote two-device:
+- [ ] Opponent transitions idle → Rolling… → Thinking… → idle: Δ = 0 px
+- [ ] My turn → opponent turn: Δ = 0 px
+- [ ] DicePanel: waiting → rolled-result → bar empty (turn end): Δ = 0 px
+- [ ] No-legal-moves End button appears: Δ = 0 px
+- [ ] Special-roll card open / close: Δ = 0 px

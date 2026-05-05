@@ -112,6 +112,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)',
     gap: 8,
     overflow: 'hidden',
+    // Stable bar height across DicePanel state transitions so the board does
+    // not shift vertically between my-turn / opponent-turn (US-005).
+    minHeight: 96,
   },
   barDim: { opacity: 0.55 },
   left: { width: 76, alignItems: 'flex-start' },

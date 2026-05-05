@@ -102,15 +102,68 @@ def make_checker_click():
     return out
 
 
+def make_bear_off_chime():
+    """Soft bell-like cue for bear-off — distinct from the user's moving
+    recording (US-013, US-015 spec: "different sound from regular moves").
+    Two-partial bell (root + perfect fifth, 660 Hz / 990 Hz) with a gentle
+    attack ramp and a long exponential decay. Soft amplitude (peak ~0.5).
+    """
+    length = int(SAMPLE_RATE * 0.55)
+    out = [0.0] * length
+    f1 = 660.0   # E5-ish fundamental
+    f2 = 990.0   # B5-ish fifth
+    f3 = 1320.0  # E6 octave shimmer
+    for i in range(length):
+        t = i / SAMPLE_RATE
+        env = math.exp(-t * 5.5)
+        tone = (
+            math.sin(TWO_PI * f1 * t) * 0.55
+            + math.sin(TWO_PI * f2 * t) * 0.28
+            + math.sin(TWO_PI * f3 * t) * 0.10
+        )
+        out[i] = tone * env * 0.5
+    # 12 ms gentle attack ramp so the bell never starts on a hard transient.
+    attack = int(SAMPLE_RATE * 0.012)
+    for i in range(attack):
+        out[i] *= i / attack
+    return out
+
+
+def make_die_collision_tick():
+    """Tiny percussive tick used when the two dice physically collide
+    mid-flight (US-012). High-passed noise burst with very short decay so
+    it sits 'inside' the dice-throw recording without competing with it.
+    """
+    length = int(SAMPLE_RATE * 0.05)
+    noise = [(random.random() * 2 - 1) * 0.6 for _ in range(length)]
+    filtered = biquad_bandpass(noise, 4500.0, 1.6)
+    out = [0.0] * length
+    for i in range(length):
+        t = i / SAMPLE_RATE
+        env = math.exp(-t * 140)
+        out[i] = filtered[i] * env
+    peak = max((abs(x) for x in out), default=0.0)
+    if peak > 0:
+        g = 0.4 / peak  # softened
+        out = [x * g for x in out]
+    return out
+
+
 def main():
+    # Seed BEFORE constructing the targets list — Python evaluates list
+    # literals eagerly so each `make_*()` runs at construction time, and
+    # they consume `random.random()` internally. Keeping the seed call
+    # first guarantees byte-identical output across runs.
+    random.seed(0xBE5)
     here = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(here, "..", "assets", "sfx")
     targets = [
         ("dice-shake-loop.wav", make_shake_loop()),
         ("dice-land.wav", make_land_thud()),
         ("checker-click.wav", make_checker_click()),
+        ("bear-off.wav", make_bear_off_chime()),
+        ("die-collision.wav", make_die_collision_tick()),
     ]
-    random.seed(0xBE5)  # deterministic placeholders
     for name, samples in targets:
         path = os.path.normpath(os.path.join(out_dir, name))
         write_wav_mono(samples, path)

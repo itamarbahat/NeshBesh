@@ -19,7 +19,7 @@ interface PieceProps {
  * White stones:  Ivory → warm cream center → subtle highlight ring
  * Black stones:  Deep charcoal → lighter graphite center → inner shine
  */
-export const Piece: React.FC<PieceProps> = ({
+const PieceImpl: React.FC<PieceProps> = ({
   sign,
   size = 30,
   animated = false,
@@ -139,6 +139,8 @@ export const Piece: React.FC<PieceProps> = ({
 
   return piece;
 };
+
+export const Piece = React.memo(PieceImpl);
 
 const styles = StyleSheet.create({
   outerShadow: {

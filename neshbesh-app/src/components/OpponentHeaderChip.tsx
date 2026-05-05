@@ -67,7 +67,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
     minWidth: 180,
+    // Stable height across opponent activity transitions (Rolling… / Thinking…
+    // / idle) so the board below does not shift between turns (US-005). Sized
+    // to fit name row + activity row + paddings.
+    minHeight: 50,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   name: { color: '#FFF', fontSize: 13, fontWeight: '800', maxWidth: 140 },

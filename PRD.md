@@ -1,18 +1,28 @@
-# PRD: NeshBesh Engine — Special Rolls, Bear-off Correctness & Path-Search Performance
+# PRD: NeshBesh — UI Performance, Dice Physics, Audio & Static Board
+
+**Release window:** 2026-06-10
+**Scope tag:** `perf-physics-audio`
 
 ## Introduction
 
-NeshBesh's engine has drifted from the canonical rule-set in three areas (5/1 four-move semantics, blocked-double-on-Bar re-rolls, 6/5 Nesh-Strike free-move restrictions) and the bear-off pathway does not enforce the standard "must advance from higher slots" rule. Recent rule additions also introduced visible lag during Click 1 (path computation in [calculatePossibleMoves](neshbesh-app/src/engine/index.ts)).
+The June 10 release targets four interlocking quality gaps:
 
-This PRD breaks the work into Ralph-sized stories, dependency-ordered: pure-engine first → store/state-machine → UI surface → performance. Each story is verifiable in isolation and ends with `Typecheck passes` (and browser verification when UI is touched).
+1. **Tap-to-select lag** — a recent regression has dropped board interaction below 60 fps on the Click-1 / Click-2 hot path.
+2. **Dice physics correctness** — dice currently overshoot the playable area, sometimes obscure the remaining-pip indicators in the dice box, and can miss an animation budget.
+3. **Audio realism** — the placeholder dice SFX needs to be replaced with a layered, per-die staggered set (roll / land / dice-on-dice collision / bear-off). The reference recording will be provided separately.
+4. **Static board layout** — in both local hotseat and remote two-device modes, the board's screen position drifts vertically as surrounding chrome reflows between turns. The board must remain visually pinned to screen center.
+
+This PRD is dependency-ordered: investigation → perf fix → layout → physics → audio plumbing → asset swap → verification. Each story fits one Ralph iteration and ends with `Typecheck passes` (plus browser/device verification when UI is touched).
 
 ## Goals
 
-- Implement the rewritten **5/1 (1/5)** rule: roll one die → play **4 moves of that rolled value**; bar-entry and bear-off each consume one of the four moves.
-- Implement **Blocked-Double-on-Bar re-roll**: when a doubles roll lands on a fully-blocked entry point, grant a full new roll; **3 consecutive blocked doubles → Table Flip**.
-- Rewrite **6/5 Nesh-Strike Free Moves**: always 2 free moves; when on the Bar, the **first** free move must land in opponent's home (= bar entry), the **second** is unrestricted; remove the "last piece exception."
-- Enforce standard bear-off rule: a die value X with no checker on point X must first advance checkers from points farther from the exit before bearing off.
-- Restore smooth Click 1 / Click 2 responsiveness by memoizing path search and narrowing render selectors.
+- Restore **60 fps** on Click-1 piece selection across iOS, Android (incl. low-end), and web. Identify and fix the recent regression.
+- Pin the board to screen center in both `gameMode === 'local'` and `gameMode === 'remote'` — surrounding chrome must reflow or overlay without translating the board.
+- Cap every dice animation at **3 seconds** wall-clock from release to fully-at-rest, with a hard snap-to-final-pose if the physics solver overruns.
+- Make dice **bounce elastically** off board / dice-box walls and **collide with each other**.
+- Guarantee dice **never settle on top of the move-pip indicators** rendered inside the dice box.
+- Trigger SFX **per-die, staggered**, for the four event types: roll, land, dice-on-dice collision, bear-off. Audio API must accept the new layered reference recording when it arrives.
+- All deliverables ship by **2026-06-10**.
 
 ## User Stories
 
@@ -20,243 +30,233 @@ This PRD breaks the work into Ralph-sized stories, dependency-ordered: pure-engi
 
 ---
 
-### US-001: Bear-off — enforce "must advance from higher slots first"
+### US-001: Identify the tap-to-select performance regression
 
-**Description:** As a player, I want bear-off to obey the standard rule so that a die value X with no checker on point X advances a higher-slot checker (farther from the exit) before any lower-slot bear-off is allowed.
+**Description:** As the maintainer, I want a written, reproducible diagnosis of the Click-1 lag so the fix in US-002 has a concrete target.
 
 **Acceptance Criteria:**
-- [ ] In [engine/index.ts](neshbesh-app/src/engine/index.ts), `calculatePossibleMoves` (with `bearOff=true`) returns bear-off destinations for die X **only when** no checker exists on a slot farther from the exit than the candidate `from`.
-- [ ] "Farther from exit" is computed per side: White's exit is past slot 24, so farther = lower-numbered slot in home (19→24 home, slot 19 is farthest); Black's exit is past slot 1, so farther = higher-numbered slot in home (1→6 home, slot 6 is farthest).
-- [ ] When the die value exactly matches the slot's distance to exit, bear-off is always allowed regardless of higher slots (existing behavior preserved).
-- [ ] When die value > distance-to-exit and there is **no** checker farther from the exit, bear-off the highest-distance checker is allowed (overshoot rule preserved).
-- [ ] Unit-style scenario in `scripts/debug.ts`: White has checkers on `[19,20]`, dice=`[3]` → `from=20` does NOT yield bear-off; `from=19` yields bear-off via overshoot only after slot 20 is empty.
-- [ ] Typecheck passes
+- [ ] Reproduce the lag on a release build by tapping a piece on a mid-game board (≥10 checkers placed) and capturing a frame timeline (Reanimated trace, React DevTools profiler, or platform tooling).
+- [ ] Identify the offending commit by `git bisect` or by inspection of the post-`5fe6a8d` history (the PRD-engine-rules / PRD-dice-polish merges are the leading suspects per `progress.txt`).
+- [ ] Pinpoint the hot path: a specific function in `engine/index.ts`, a specific selector in a Zustand store, or a specific effect in a React component. Record file path + line range.
+- [ ] Write findings into `progress.txt` under a new `### US-001 — regression diagnosis` block: commit SHA, hot path, frame budget exceeded by how many ms.
+- [ ] Typecheck passes (no code change expected, but run it to baseline).
 
 ---
 
-### US-002: Engine helper — `isBarEntryBlocked(board, sign, dieValue)`
+### US-002: Fix the tap-to-select regression
 
-**Description:** As the turn-flow code, I want a single boolean helper so I can detect when a bar checker cannot enter on a given die value (target point has 2+ opponent checkers).
-
-**Acceptance Criteria:**
-- [ ] Add `export const isBarEntryBlocked = (board: number[], sign: PlayerSign, dieValue: number): boolean` to [engine/index.ts](neshbesh-app/src/engine/index.ts).
-- [ ] White entry target = `dieValue` (slot 1..6); Black entry target = `25 - dieValue` (slot 19..24).
-- [ ] Returns `true` iff `Math.sign(board[target]) === -sign && Math.abs(board[target]) >= 2`.
-- [ ] Used by US-008; not yet wired into the store in this story.
-- [ ] Typecheck passes
-
----
-
-### US-003: Engine — `getFreeMoveFinals` accepts an `opponentHomeOnly` flag
-
-**Description:** As the 6/5 free-move handler, I want to ask the engine for free-move destinations restricted to opponent's home so I can implement the bar-entry-then-free flow.
+**Description:** As a player, I want Click-1 selection to feel instantaneous so the touched-moved rule does not feel punishing.
 
 **Acceptance Criteria:**
-- [ ] Extend `getFreeMoveFinals(board, sign, opponentHomeOnly?: boolean)` in [engine/index.ts](neshbesh-app/src/engine/index.ts).
-- [ ] When `opponentHomeOnly` is true: White → slots `[1..6]`; Black → slots `[19..24]`. Filter out blocked slots (2+ opponent checkers) using existing `isLandable` logic.
-- [ ] When `opponentHomeOnly` is false/undefined: behavior unchanged (any non-blocked board slot).
-- [ ] Existing call sites continue to compile without modification.
-- [ ] Typecheck passes
-
----
-
-### US-004: Types — extend state for 5/1 four-move mode
-
-**Description:** As the state machine, I need types/fields that represent "play 4 moves at the rolled value" so 5/1 can drop into the standard `availableDice` flow.
-
-**Acceptance Criteria:**
-- [ ] Add an optional flag `is51FourMove: boolean` to `NeshBeshState` in [store/useGameStore.ts](neshbesh-app/src/store/useGameStore.ts) (default `false`).
-- [ ] No new phase needed — playback uses the existing `MOVING` phase with `availableDice = [v, v, v, v]`.
-- [ ] Add a JSDoc one-liner above the field explaining the WHY (5/1 must consume bar-entry / bear-off as one of the four slots regardless of pip distance).
-- [ ] Typecheck passes
-
----
-
-### US-005: Store — 5/1 single-die roll resolves into 4 moves of rolled value
-
-**Description:** As a player rolling 5/1, I want the manual single-die trigger to produce 4 moves of the rolled value so play proceeds as a pseudo-double.
-
-**Acceptance Criteria:**
-- [ ] In `confirmSpecialResult` (5/1 branch) in [store/useGameStore.ts](neshbesh-app/src/store/useGameStore.ts), set `availableDice = [d, d, d, d]`, `is51FourMove = true`, `phase = 'MOVING'`.
-- [ ] `doublesCount` is **not** incremented (special rolls never grant extra turns — see CLAUDE.md §2).
-- [ ] Existing 5/1 bar-entry exception (single-die forward entry, turn ends) is preserved unchanged.
-- [ ] Message: `5:1 — Playing 4 moves of {d}`.
-- [ ] Typecheck passes
-
----
-
-### US-006: Store — 5/1 bar entry consumes 1 of the 4 moves at rolled value
-
-**Description:** As a player on the Bar during 5/1, entering my bar checker should consume one of the four rolled-value moves regardless of whether the entry distance equals the rolled value.
-
-**Acceptance Criteria:**
-- [ ] When `is51FourMove === true` and the player has a bar piece, attempting bar entry uses the rolled value `d` as the entry distance (White → slot `d`, Black → slot `25 - d`).
-- [ ] On successful entry, exactly one entry is removed from `availableDice` (the array shrinks from 4 to 3).
-- [ ] If the entry point is blocked (2+ opponent checkers), entry is rejected; if **all four** entry attempts are blocked (i.e. no entry possible at all), the turn ends with all 4 moves forfeited and message `5:1 — Bar entry blocked, turn ends`.
-- [ ] Typecheck passes
-
----
-
-### US-007: Store — 5/1 bear-off consumes 1 of the 4 moves at rolled value
-
-**Description:** As a player in the bear-off phase during 5/1, removing a checker should consume one of the four rolled-value moves; the standard "must-advance-higher" rule (US-001) still applies.
-
-**Acceptance Criteria:**
-- [ ] When `is51FourMove === true` and `canBearOff(board, sign)` is true, bearing off any home-board checker consumes one die from `availableDice`.
-- [ ] Bear-off legality is delegated to `calculatePossibleMoves(..., bearOff=true)` from US-001 (no duplicate rule logic).
-- [ ] When `availableDice.length === 0`, `is51FourMove` resets to `false` and turn ends (no extra turn).
-- [ ] Typecheck passes
-
----
-
-### US-008: Store — Blocked double on Bar triggers full re-roll
-
-**Description:** As a player whose doubles roll lands on a fully-blocked Bar entry, I want the dice re-rolled so I'm not stuck.
-
-**Acceptance Criteria:**
-- [ ] After a doubles roll, when `hasBarPieces(board, sign)` and `isBarEntryBlocked(board, sign, d) === true` (US-002), the store transitions back to `phase = 'WAITING_ROLL'`, increments a new `blockedDoubleStreak` counter, and emits message `Double {d} — entry blocked, re-rolling…`.
-- [ ] `blockedDoubleStreak` resets to 0 the moment any non-blocked roll occurs OR the player has no bar piece.
-- [ ] Re-roll happens automatically (no extra tap required) on the next state tick.
-- [ ] Typecheck passes
-
----
-
-### US-009: Store — 3 consecutive blocked doubles → Table Flip
-
-**Description:** As a player who hits 3 blocked doubles in a row, my turn ends per the existing 3-consecutive-doubles rule.
-
-**Acceptance Criteria:**
-- [ ] When `blockedDoubleStreak === 3`, the store ends the turn (passes dice to the opponent), resets `blockedDoubleStreak = 0`, and emits message `3 blocked doubles — Table Flip!`.
-- [ ] Reuses the existing table-flip animation hook ([useTableFlipAnimation.ts](neshbesh-app/src/animations/useTableFlipAnimation.ts)) — no new animation code.
-- [ ] In remote mode, the table-flip state syncs through the existing host-authoritative `syncGameState` path; no new Firebase fields required.
+- [ ] Implement the targeted fix from US-001 (revert offending change, narrow a selector, memoize a computed value, defer a side effect, etc.).
+- [ ] On the same mid-game repro from US-001, the Click-1 frame budget is **≤16.7 ms (60 fps)** on a baseline iPhone 12 / Pixel 6 class device.
+- [ ] No visual regression on Board, Piece, Slot, or any highlight (blue/green) rendering.
+- [ ] Move-cache (`resetMoveCache` per `progress.txt` US-015) remains correct: stale paths never appear after `applyMove`, `endTurnImpl`, or a Nesh Strike free move.
 - [ ] Typecheck passes
 - [ ] Verify changes work in browser
 
 ---
 
-### US-010: Store — 6/5 with bar pieces: first free move = opponent home, second = unrestricted
+### US-003: Narrow remaining full-state subscriptions
 
-**Description:** As a player rolling 6/5 while on the Bar, my first free move should land in opponent's home (= bar entry); my second free move should be unrestricted on the board.
-
-**Acceptance Criteria:**
-- [ ] When `neshStrikeFreeMovesLeft === 2` AND `hasBarPieces(board, sign)`, the highlights returned to the UI use `getFreeMoveFinals(board, sign, /*opponentHomeOnly*/ true)` (US-003), and the source piece is forced to be the bar checker.
-- [ ] When `neshStrikeFreeMovesLeft === 1` (regardless of bar status), highlights use `getFreeMoveFinals(board, sign, false)` and any of the player's checkers may be selected as the source.
-- [ ] If `neshStrikeFreeMovesLeft === 2` and **all** opponent-home slots are blocked, the turn ends with both free moves forfeited and message `6:5 — Bar entry blocked, free moves forfeited`.
-- [ ] Typecheck passes
-
----
-
-### US-011: Store — Remove 6/5 "last piece on Bar" exception
-
-**Description:** As a player whose only remaining checker is on the Bar, a 6/5 still grants 2 free moves (the first is the bar entry, the second moves the same piece freely).
+**Description:** As a developer, I want the three components flagged in `progress.txt` US-016 (`ThrowingDiceOverlay`, `OpponentHeaderChip`, `RemoteBottomBar`) to subscribe via narrowed selectors so unrelated store updates stop re-rendering them.
 
 **Acceptance Criteria:**
-- [ ] No code path reduces `neshStrikeFreeMovesLeft` from 2 to 1 based on "only one piece left" — that logic, if present, is removed.
-- [ ] CLAUDE.md §2 "Last Piece Exception" bullet is updated to reflect the new behavior (single docs edit, no rules logic in markdown).
-- [ ] Typecheck passes
-
----
-
-### US-012: UI — 5/1 dice indicator shows 4 pips of rolled value remaining
-
-**Description:** As a player mid 5/1 turn, I want to see how many of the four moves at value `d` remain so I can plan.
-
-**Acceptance Criteria:**
-- [ ] [DicePanel.tsx](neshbesh-app/src/components/DicePanel.tsx) renders `availableDice.length` pips of value `d` when `is51FourMove === true` (re-uses existing per-die rendering, no new component).
-- [ ] [SingleDieRoller.tsx](neshbesh-app/src/components/SingleDieRoller.tsx) closes/dismisses cleanly once the rolled value is committed.
-- [ ] Hebrew message displayed: `5:1 — נותרו {n} מהלכים של {d}`.
+- [ ] `ThrowingDiceOverlay` no longer reads the full `useGameStore` state; it subscribes only to the fields it renders (dice list, phase, throw token).
+- [ ] `OpponentHeaderChip` subscribes only to opponent name, opponent bear-off count, and the boolean `phase === 'WAITING_ROLL'` / `phase === 'MOVING'` it shows.
+- [ ] `RemoteBottomBar` subscribes only to my dice, my status, and the End-Turn enabled boolean.
+- [ ] Each component still updates on every relevant state change (manual smoke test: roll, move, capture, bear-off, end-turn).
 - [ ] Typecheck passes
 - [ ] Verify changes work in browser
 
 ---
 
-### US-013: UI — Blocked-double re-roll feedback
+### US-004: Static-board container — local hotseat
 
-**Description:** As a player whose double was rejected, I want a brief visual cue so I understand why the dice are re-rolling.
+**Description:** As a player on one device, I want the board to stay pinned at screen center across turn transitions so my eyes don't have to re-find it.
 
 **Acceptance Criteria:**
-- [ ] [SpecialRollOverlay.tsx](neshbesh-app/src/components/SpecialRollOverlay.tsx) shows a 1.2-second message bubble `Double {d} — entry blocked` before the auto re-roll fires.
-- [ ] On the 3rd consecutive block, the table-flip animation plays and the message bubble reads `3 blocked doubles — Table Flip!`.
-- [ ] No new animation code is added; only the existing flip hook is invoked.
+- [ ] In `App.tsx`'s `gameMode === 'local'` branch, the board container has a fixed centered position (no flex re-distribution that translates it during turn switch).
+- [ ] When the special-roll card / `PlayerDiceBar` swaps sides between White's turn and Black's turn, the board's top-left coordinate (in screen pixels) does not change by more than 1 px.
+- [ ] `PlayerDiceBar` (top, rotated 180°) and the bottom `PlayerDiceBar` continue to render in their existing positions; if space conflicts, the dice bar overlays rather than displacing the board.
+- [ ] Special-roll cards continue to mirror toward the active player per CLAUDE.md §3.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser (and on a phone-form-factor device)
+
+---
+
+### US-005: Static-board container — remote two-device
+
+**Description:** As a remote player, I want the board pinned at screen center even as `OpponentHeaderChip` swaps state ("Rolling…" / "Thinking…") and `RemoteBottomBar` content changes.
+
+**Acceptance Criteria:**
+- [ ] In `App.tsx`'s `gameMode === 'remote'` branch, the board container has a fixed centered position; chrome size changes do not translate the board.
+- [ ] `OpponentHeaderChip` and `RemoteBottomBar` overlay or sit in fixed-height regions; their text-length changes do not displace the board vertically.
+- [ ] No rotation is applied anywhere (CLAUDE.md §3 invariant preserved).
 - [ ] Typecheck passes
 - [ ] Verify changes work in browser
 
 ---
 
-### US-014: Performance — profile path-search hot path and document findings
+### US-006: Static-board verification — chrome reflow audit
 
-**Description:** As an engineer, I want a baseline profile of `calculatePossibleMoves` and its consumers so optimizations target real hotspots.
+**Description:** As QA, I want a documented audit confirming that every UI chrome change (dice panel size, special-roll card appearance, opponent chip text change, end-turn button appearance) does not nudge the board.
 
 **Acceptance Criteria:**
-- [ ] Add a `console.time` / `console.timeEnd` block (gated by `__DEV__`) wrapping each call to `calculatePossibleMoves` in the store's selection branch.
-- [ ] Run a 5-minute play session in browser; record three slowest measurements and the most frequently-called `from` indices in `progress.txt` under `## Learnings`.
-- [ ] No production behavior change — all instrumentation is `__DEV__`-gated.
+- [ ] Manual checklist appended to `progress.txt` covering: White→Black turn switch (local), Black→White turn switch (local), opponent transitions Rolling→Thinking→Idle (remote), End-Turn button appearance (remote), special-roll card open/close (both modes), Hotseat opening-roll overlay open/close.
+- [ ] Each row records the board's measured top-left in two states; delta must be 0 px.
 - [ ] Typecheck passes
 - [ ] Verify changes work in browser
 
 ---
 
-### US-015: Performance — memoize `calculatePossibleMoves` per turn
+### US-007: Dice physics — elastic wall bounce
 
-**Description:** As a player clicking around the board mid-turn, I want highlight computation reused across clicks so Click 1 stays under 16ms.
+**Description:** As a player, I want dice to bounce off the board / dice-box edges instead of escaping the play area.
 
 **Acceptance Criteria:**
-- [ ] Introduce a turn-scoped `Map<string, { intermediate: number[]; final: number[] }>` cache in [engine/index.ts](neshbesh-app/src/engine/index.ts), keyed by `${boardHash}|${from}|${sign}|${dice.join(',')}|${backward}|${bearOff}`.
-- [ ] `boardHash` is a fast string hash of the 26-cell array (e.g. `board.join(',')`).
-- [ ] The cache is cleared by an exported `resetMoveCache()` called by the store at every turn-start and after every successful move.
-- [ ] No public API change to `calculatePossibleMoves` callers.
+- [ ] In the dice physics module (`ThrowingDiceOverlay` per `progress.txt` and `diceConstants.ts`), board / dice-box edges are modeled as elastic walls with restitution > 0 (chosen empirically to match a real dice feel).
+- [ ] Across 50 simulated rolls (RNG seed varied) no die's center exits the play-area rect at any frame.
+- [ ] Existing landing-rect logic (`pickLandingPoint` / `pickPairLandingPoints` in `diceConstants.ts`) still produces final rest poses inside the playable surface.
 - [ ] Typecheck passes
+- [ ] Verify changes work in browser
 
 ---
 
-### US-016: Performance — narrow store selectors to prevent highlight recomputation on unrelated state
+### US-008: Dice physics — dice-on-dice collision
 
-**Description:** As a player, I want highlight components not to re-render when unrelated store fields (e.g. message text) change so Click 1 stays smooth.
+**Description:** As a player, I want the two dice to collide with each other for visual realism instead of passing through.
 
 **Acceptance Criteria:**
-- [ ] [Slot.tsx](neshbesh-app/src/components/Slot.tsx), [Point.tsx](neshbesh-app/src/components/Point.tsx), and [Board.tsx](neshbesh-app/src/components/Board.tsx) subscribe to the store via narrowed selectors (e.g. `useGameStore(s => s.intermediateHighlights)`) instead of the full state.
-- [ ] At least one component switches from full-state subscription to narrowed selector — verified by visible diff.
-- [ ] React DevTools Profiler shows ≤ 1 re-render of `<Slot>` per Click 1 (down from current N).
+- [ ] The two dice in `ThrowingDiceOverlay` are modeled as colliding bodies (spheres or AABBs sized to the die) with elastic collision response.
+- [ ] In a roll where both dice are launched toward the same landing target, they visibly bounce off each other and settle apart.
+- [ ] Final rest poses still respect the no-overlap-with-checker-column rule from `boardConstants.getOccupancyRects` (PRD-dice-polish acceptance preserved).
 - [ ] Typecheck passes
 - [ ] Verify changes work in browser
+
+---
+
+### US-009: Dice physics — 3-second settle cap
+
+**Description:** As a player, I want the dice animation to never feel sluggish — it must conclude within 3 seconds.
+
+**Acceptance Criteria:**
+- [ ] Physics damping / friction constants in `diceConstants.ts` are tuned so that across 100 simulated rolls, the 99th-percentile settle time is ≤3000 ms.
+- [ ] A hard cap exists: at exactly 3000 ms after release, if any die is still in motion, it snaps to its final rest pose (computed by the existing `pickLandingPoint` / `pickPairLandingPoints`) with a brief fade or pop, and the audio shake handle stops cleanly.
+- [ ] `getRollDurationMs` continues to vary roll length between min and max within `[ROLL_DURATION_MIN_MS, 3000]`.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-010: Dice physics — occlusion guard for move-pip indicators
+
+**Description:** As a player, I want to always see how many moves I have left, so dice must never settle on top of the pip indicators in the dice box.
+
+**Acceptance Criteria:**
+- [ ] The move-pip indicator region is added to `boardConstants.getOccupancyRects` (or an equivalent forbidden-rect collection) so the dice landing solver treats it as a forbidden zone.
+- [ ] Across 100 simulated rolls (with a full set of unused dice rendered), no die's resting AABB intersects the pip-indicator rect.
+- [ ] If physics drives a die into the forbidden rect, the snap-to-final-pose logic from US-009 relocates it to the nearest legal landing point.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-011: Audio API — per-die staggered event surface
+
+**Description:** As `useAudioManager`, I want a clean per-die API surface so the upcoming reference recording can be wired in without touching call sites again.
+
+**Acceptance Criteria:**
+- [ ] `useAudioManager` exposes: `playDieRoll(dieIndex: 0 | 1, durationMs: number)`, `playDieLand(dieIndex: 0 | 1)`, `playDieCollision()`, `playBearOff()`.
+- [ ] Each method tolerates a missing asset: if the underlying buffer is `null`, it returns silently (no throw, no console error) — matching the existing `playRollDice`/`playMovePiece` no-op fallback pattern from PRD-dice-polish.
+- [ ] Existing `playShakeFor`, `playDiceLand`, `playCheckerClick` continue to work; new methods coexist without removing the old shake/land layer until US-015 swaps assets.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-012: Wire collision SFX into physics events
+
+**Description:** As a player, I want to hear a tick when the two dice collide.
+
+**Acceptance Criteria:**
+- [ ] The dice-on-dice collision detection from US-008 fires `audio.playDieCollision()` exactly once per discrete contact event (rate-limited to avoid machine-gun triggers when bodies skim).
+- [ ] No collision SFX fires when only a single die is in flight or at rest.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-013: Wire bear-off SFX into bear-off action
+
+**Description:** As a player, I want a distinct sound when a checker bears off so the action feels rewarded.
+
+**Acceptance Criteria:**
+- [ ] Every successful bear-off in `handlePointPress` (and Nesh Strike free-move bear-off, if reachable) triggers `audio.playBearOff()` exactly once.
+- [ ] Bear-off via the 5:1 four-move special does not over-trigger (one SFX per bear-off, not per consumed die).
+- [ ] No bear-off SFX fires on regular captures or non-bear-off moves.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-014: Stagger per-die roll/land triggers
+
+**Description:** As a player, I want the two dice to sound like two physical objects, not one — their roll and land sounds must be offset.
+
+**Acceptance Criteria:**
+- [ ] On a two-die roll, `playDieRoll(0, ...)` and `playDieRoll(1, ...)` fire with a small randomized stagger (e.g., 30–120 ms) so they do not sample-lock.
+- [ ] On landing, `playDieLand(0)` and `playDieLand(1)` fire when each die individually reaches rest, not on a single shared landing event.
+- [ ] The legacy single `playShakeFor` / `playDiceLand` path is removed (or routed through the new per-die calls) so we don't double-trigger.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-015: Replace placeholder dice SFX with reference-derived assets
+
+**Description:** As a player, I want the dice to sound like the real reference recording the user is providing.
+
+**Acceptance Criteria:**
+- [ ] New audio files are placed under `neshbesh-app/assets/sfx/` for: `die-roll.{m4a|mp3}`, `die-land.{m4a|mp3}`, `die-collision.{m4a|mp3}`, `bear-off.{m4a|mp3}`.
+- [ ] `useAudioManager` loads each asset; missing-asset fallback from US-011 is preserved as a safety net.
+- [ ] Subjective A/B with the user against the reference recording confirms the swap; record approval in `progress.txt`.
+- [ ] `scripts/generate-sfx.ts` is updated or annotated to reflect that the placeholder generation is no longer the source of truth for these four files.
+- [ ] Typecheck passes
+- [ ] Verify changes work in browser
+
+---
+
+### US-016: Cross-platform release verification
+
+**Description:** As release engineering, I want a documented smoke run on every supported platform before the 2026-06-10 cut.
+
+**Acceptance Criteria:**
+- [ ] Smoke test executed and signed-off on: iOS phone, iOS tablet, Android phone (low-end class), Android tablet, web (Chrome desktop). Per platform, record FPS observed during Click-1 (target ≥60).
+- [ ] All checklist rows in `progress.txt`'s "Manual Test Plan" pass — including US-006 board-pinning audit and US-009/US-010 physics scenarios.
+- [ ] No regressions in: PRD-multiplayer test plan rows, PRD-dice-polish test plan rows, PRD-engine-rules special-roll behaviors.
+- [ ] `npx tsc --noEmit` passes from `neshbesh-app/`.
+- [ ] Verify changes work in browser (final pass).
 
 ---
 
 ## Non-Goals
 
-- No changes to remote / Firebase sync schema (host-authoritative model unchanged; `syncGameState` carries new fields organically).
-- No new animations, sounds, or haptics — all UI work reuses existing hooks in [animations/](neshbesh-app/src/animations/) and [audio/](neshbesh-app/src/audio/).
-- No changes to scoring (Simple / Mars / Turkish Mars / Star Mars) or match structure.
-- No changes to the 2-click selection model itself — only the rule set the engine evaluates within it.
-- No changes to other special rolls (1:2, 4:5, 6:3, 5:2, 4:3) beyond what is required by the shared helpers.
-- No persistence layer (saved games, replay history) — out of scope.
+- **No engine rule changes.** Special rolls, bear-off semantics, Nesh Strike, blocked-double-on-Bar, and 5:1 four-move are governed by `PRD-engine-rules.md` and considered frozen for this release.
+- **No multiplayer sync schema changes.** Firebase `gameState` payload stays as-is; new audio / physics / layout state is local-only and never crosses the wire.
+- **No new game modes, themes, or visual redesigns.** Color, ratio, and board art constants in `BOARD_FROZEN` (`boardConstants.ts`) remain untouched.
+- **No new dependencies** unless strictly required by a chosen physics approach. Reanimated / Moti / `expo-av` cover the current surface.
+- **Reference recording sourcing** is out of scope — the user provides the raw recording; US-015 only handles integration.
+- **Performance work beyond Click-1 / Click-2.** Roll animation perf, network round-trip latency, and bundle size are not in scope unless surfaced as blockers by US-001.
 
 ## Technical Notes
 
-- **Existing helpers to reuse:** `calculatePossibleMoves`, `canBearOff`, `hasBarPieces`, `applyNeshStrike`, `getFreeMoveFinals`, `BEAR_OFF_WHITE`, `BEAR_OFF_BLACK` in [engine/index.ts](neshbesh-app/src/engine/index.ts).
-- **Existing phases to reuse:** `MOVING`, `WAITING_ROLL`, `SPECIAL_51_ROLL`, `SPECIAL_43_ROLL` in [store/useGameStore.ts](neshbesh-app/src/store/useGameStore.ts). No new phases introduced.
-- **Existing UI components to reuse:** [DicePanel.tsx](neshbesh-app/src/components/DicePanel.tsx), [SingleDieRoller.tsx](neshbesh-app/src/components/SingleDieRoller.tsx), [SpecialRollOverlay.tsx](neshbesh-app/src/components/SpecialRollOverlay.tsx). No new components introduced.
-- **Animations:** Reuse [useTableFlipAnimation.ts](neshbesh-app/src/animations/useTableFlipAnimation.ts) for the 3-blocked-doubles flip. No new animation hooks.
-- **Token hygiene (CLAUDE.md §0):** never read lockfiles or `node_modules/`; do not pre-emptively open siblings of an error location.
-- **Hebrew copy:** message strings are user-facing — keep wording consistent with existing Hebrew strings in the store.
-- **Sub-agent guidance (CLAUDE.md §4):** engine/store stories → `logic` agent; UI stories → `stylist` agent; animation-touching stories (US-013) → `fx` agent; performance investigation (US-014) → `debugger` agent.
-
-## Dependency Graph (cheat sheet)
-
-```
-US-001 ─┐
-US-002 ─┤
-US-003 ─┤── (engine layer, parallelizable)
-US-004 ─┘
-          │
-          ▼
-US-005 → US-006 → US-007        (5/1 store chain — depend on US-001, US-004)
-US-008 → US-009                 (blocked-double chain — depend on US-002)
-US-010 → US-011                 (6/5 chain — depend on US-003)
-          │
-          ▼
-US-012, US-013                  (UI surface — depend on the store stories above)
-          │
-          ▼
-US-014 → US-015 → US-016        (perf — runs last so it measures the new rules)
-```
+- **Existing modules to reuse:**
+  - `neshbesh-app/src/animations/diceConstants.ts` — owns dice timing/scale magic numbers and `getRollDurationMs` / `pickLandingPoint`.
+  - `neshbesh-app/src/utils/boardConstants.ts` — `getOccupancyRects` for forbidden-zone math; `BOARD_FROZEN` constants are off-limits.
+  - `neshbesh-app/src/audio/useAudioManager.ts` — extend, do not replace, the existing `playShakeFor`/`playDiceLand`/`playCheckerClick` API.
+  - `neshbesh-app/src/engine/index.ts` — `resetMoveCache()` and the move-cache key from `progress.txt` US-015 must keep working through the perf fix.
+- **Physics approach** is left to the implementer's judgment between (a) a thin custom integrator inside `ThrowingDiceOverlay` (current pattern) tuned for damping/friction, or (b) a small physics library if (a) cannot meet US-007 / US-008 / US-009 simultaneously. Default to (a) and only escalate if necessary; document the choice in `progress.txt`.
+- **Static-board layout** likely means moving the board into a `position: absolute` (web) / fixed-size flex parent (native) container that ignores chrome-size deltas. Confirm via measurement (US-006) rather than visual inspection.
+- **`gameMode === 'local'` byte-equivalence** rule from CLAUDE.md §3 still applies to `PlayerDiceBar` and `PlayerSidebar` content; only the *parent layout container* may move.
+- **TypeScript verification** environment note from prior progress entries: `node`/`npm`/`tsc` are not on PATH in some dev setups — the user must run `npx tsc --noEmit` from `neshbesh-app/` to verify each story.

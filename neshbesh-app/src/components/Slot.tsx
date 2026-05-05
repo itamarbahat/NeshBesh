@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import { Piece } from './Piece';
@@ -24,7 +24,7 @@ interface SlotProps {
 /**
  * Redesigned as an elegant SVG cone that fills the full width of the column.
  */
-export const Slot: React.FC<SlotProps> = ({
+const SlotImpl: React.FC<SlotProps> = ({
   index,
   count,
   isTopRow,
@@ -34,6 +34,7 @@ export const Slot: React.FC<SlotProps> = ({
   onPress,
   pieceSize,
 }) => {
+  const handlePress = useCallback(() => onPress(index), [onPress, index]);
   const absCount = Math.abs(count);
   const sign = (Math.sign(count) || 1) as 1 | -1;
   const stackOverlap = Math.round(pieceSize * 0.18);
@@ -130,7 +131,7 @@ export const Slot: React.FC<SlotProps> = ({
           borderWidth: isHighlighted ? 1.5 : 0,
         },
       ]}
-      onPress={() => onPress(index)}
+      onPress={handlePress}
       activeOpacity={0.7}
     >
       {/* Highlight overlay */}
@@ -170,7 +171,7 @@ interface BarSlotProps {
   pieceSize: number;
 }
 
-export const BarSlot: React.FC<BarSlotProps> = ({
+const BarSlotImpl: React.FC<BarSlotProps> = ({
   index,
   count,
   isSelected,
@@ -183,11 +184,12 @@ export const BarSlot: React.FC<BarSlotProps> = ({
 
   const borderColor = isSelected ? '#FFD700' : isFinal ? '#32CD32' : 'transparent';
   const barPieceSize = Math.round(pieceSize * 0.92);
+  const handlePress = useCallback(() => onPress(index), [onPress, index]);
 
   return (
     <TouchableOpacity
       style={[styles.bar, { borderColor }]}
-      onPress={() => onPress(index)}
+      onPress={handlePress}
       activeOpacity={0.75}
     >
       {absCount > 0 && (
@@ -205,6 +207,9 @@ export const BarSlot: React.FC<BarSlotProps> = ({
     </TouchableOpacity>
   );
 };
+
+export const Slot = React.memo(SlotImpl);
+export const BarSlot = React.memo(BarSlotImpl);
 
 const styles = StyleSheet.create({
   // ── Slot (cone point) ───────────────────────────────────────────────────────

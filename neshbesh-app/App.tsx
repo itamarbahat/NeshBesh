@@ -235,10 +235,17 @@ const BoardContent: React.FC<{
   onPointPressOverride?: (index: number) => void;
   flipped?: boolean;
 }> = ({ isLandscape, boardAnimatedStyle, showEatFlash, lastThrowVelocity, boardWidth, dieSize, onPointPressOverride, flipped = false }) => {
-  const {
-    board, whiteBorneOff, blackBorneOff, selectedIndex,
-    intermediateHighlights, finalHighlights, handlePointPress,
-  } = useGameStore();
+  // Narrowed selectors: BoardContent must NOT re-render on unrelated store
+  // fields (dice, message, phase, score, etc.). Each call subscribes to one
+  // slice; identity of `handlePointPress` is stable across renders (Zustand
+  // assigns it once in the store factory).
+  const board = useGameStore((s) => s.board);
+  const whiteBorneOff = useGameStore((s) => s.whiteBorneOff);
+  const blackBorneOff = useGameStore((s) => s.blackBorneOff);
+  const selectedIndex = useGameStore((s) => s.selectedIndex);
+  const intermediateHighlights = useGameStore((s) => s.intermediateHighlights);
+  const finalHighlights = useGameStore((s) => s.finalHighlights);
+  const handlePointPress = useGameStore((s) => s.handlePointPress);
 
   const pointPress = onPointPressOverride || handlePointPress;
 
@@ -283,49 +290,74 @@ const PlayerSidebar: React.FC<{
   );
 };
 
-// Dice bar positioned above (White's turn) or below (Black's turn) the board in landscape.
+// Sided dice bar — always rendered for BOTH players in landscape so the
+// board's vertical position stays pinned to the centerStage centre across
+// turn transitions (US-004). The non-active side renders an idle placeholder
+// of equivalent height; this means total content height in centerStage is
+// `whiteBar + board + blackBar` regardless of whose turn it is.
 const CenteredDiceBar: React.FC<{
+  playerSign: 1 | -1;
   getStatusText: () => string;
   handleRoll: (v: number) => void;
   isSingleDiePhase: boolean;
   endTurnOverride?: () => void;
   dieSize: number;
-}> = ({ getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize }) => {
-  const {
-    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice,
-    board, backward, endTurn,
-  } = useGameStore();
-  const end = endTurnOverride || endTurn;
-  const isWhiteTurn = currentPlayer === 1;
+}> = ({ playerSign, getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize }) => {
+  // Narrowed selectors so this bar does not re-render on unrelated store
+  // mutations (selectedIndex, highlights, message) while it is mounted.
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const whiteBorneOff = useGameStore((s) => s.whiteBorneOff);
+  const blackBorneOff = useGameStore((s) => s.blackBorneOff);
+  const phase = useGameStore((s) => s.phase);
+  const dice = useGameStore((s) => s.dice);
+  const availableDice = useGameStore((s) => s.availableDice);
+  const board = useGameStore((s) => s.board);
+  const backward = useGameStore((s) => s.backward);
+  const endTurn = useGameStore((s) => s.endTurn);
 
-  const noLegalMoves = phase === 'MOVING'
+  const end = endTurnOverride || endTurn;
+  const isMyTurn = currentPlayer === playerSign;
+  const isWhite = playerSign === 1;
+
+  const noLegalMoves = isMyTurn
+    && phase === 'MOVING'
     && availableDice.length > 0
     && !currentPlayerHasLegalMoves({ board, currentPlayer, availableDice, backward });
 
+  // Reserve the same vertical footprint when this side is inactive so the
+  // board does not shift between turns. Heights derive from the active layout
+  // (DicePanel.diceContainer minHeight 56 + tray padding) plus the bar's own
+  // status line + paddings; centeredEndBtn is excluded — it's an opt-in row
+  // that appears only when the active player is genuinely stuck and is rare
+  // enough that its appearance is acceptable.
+  const reservedPanelHeight = Math.max(56, Math.round(dieSize * 1.6) + 24);
+
   return (
-    <MotiView
-      key={currentPlayer}
-      from={{ opacity: 0, translateY: isWhiteTurn ? -8 : 8 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 260 }}
+    <View
       style={[
         styles.centeredDiceBar,
-        isWhiteTurn ? styles.centeredDiceBarWhite : styles.centeredDiceBarBlack,
-        mirroredBarStyle(isWhiteTurn),
+        isWhite ? styles.centeredDiceBarWhite : styles.centeredDiceBarBlack,
+        mirroredBarStyle(isWhite),
+        !isMyTurn && { opacity: 0.5 },
       ]}
+      pointerEvents={isMyTurn ? 'auto' : 'none'}
     >
-      <Text style={styles.centeredDiceStatus}>{getStatusText()}</Text>
-      <View style={styles.centeredDicePanelWrapper}>
-        <DicePanel
-          rolledDice={dice} availableDice={availableDice}
-          canRoll={phase === 'WAITING_ROLL' || phase === 'SPECIAL_43_ROLL' || phase === 'SPECIAL_51_ROLL'}
-          onRoll={handleRoll} currentPlayer={currentPlayer}
-          whiteBorneOff={whiteBorneOff} blackBorneOff={blackBorneOff}
-          singleDie={isSingleDiePhase}
-          dieSize={dieSize}
-        />
+      <Text style={styles.centeredDiceStatus}>
+        {isMyTurn ? getStatusText() : '— ממתין לתורך —'}
+      </Text>
+      <View style={[styles.centeredDicePanelWrapper, { minHeight: reservedPanelHeight }]}>
+        {isMyTurn ? (
+          <DicePanel
+            rolledDice={dice} availableDice={availableDice}
+            canRoll={phase === 'WAITING_ROLL' || phase === 'SPECIAL_43_ROLL' || phase === 'SPECIAL_51_ROLL'}
+            onRoll={handleRoll} currentPlayer={currentPlayer}
+            whiteBorneOff={whiteBorneOff} blackBorneOff={blackBorneOff}
+            singleDie={isSingleDiePhase}
+            dieSize={dieSize}
+          />
+        ) : null}
       </View>
-      {noLegalMoves && (
+      {isMyTurn && noLegalMoves && (
         <TouchableOpacity
           style={styles.centeredEndBtn}
           onPress={end}
@@ -334,7 +366,7 @@ const CenteredDiceBar: React.FC<{
           <Text style={styles.sidebarEndBtnText}>No moves · End Turn</Text>
         </TouchableOpacity>
       )}
-    </MotiView>
+    </View>
   );
 };
 
@@ -349,10 +381,18 @@ const PlayerDiceBar: React.FC<{
   endTurnOverride?: () => void;
   dieSize: number;
 }> = ({ side, getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize }) => {
-  const {
-    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice,
-    board, backward, endTurn,
-  } = useGameStore();
+  // Narrowed selectors (US-002 / US-004) so this bar does not re-render on
+  // every store mutation while the active player is interacting with the
+  // board, and so its height stays stable across turns.
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const whiteBorneOff = useGameStore((s) => s.whiteBorneOff);
+  const blackBorneOff = useGameStore((s) => s.blackBorneOff);
+  const phase = useGameStore((s) => s.phase);
+  const dice = useGameStore((s) => s.dice);
+  const availableDice = useGameStore((s) => s.availableDice);
+  const board = useGameStore((s) => s.board);
+  const backward = useGameStore((s) => s.backward);
+  const endTurn = useGameStore((s) => s.endTurn);
   const end = endTurnOverride || endTurn;
 
   // Physical mapping: White (+1) sits at the top, Black (-1) at the bottom.
@@ -834,6 +874,14 @@ export default function App() {
       audio.playMovePiece();
       audio.playCheckerClick();
     }
+    // US-013: dedicated bear-off cue. The `Borne off!` message string is the
+    // single source of truth for a successful bear-off (set in the store
+    // alongside the borne-off counter increment). The 5:1 four-move special
+    // emits this message exactly once per bear-off as well, so this fires
+    // once per checker leaving the board regardless of pip arithmetic.
+    if (message !== prevMessageRef.current && message === 'Borne off!') {
+      audio.playBearOff();
+    }
     prevPhaseRef.current = phase;
     prevMessageRef.current = message;
     prevDiceRef.current = dice;
@@ -997,13 +1045,15 @@ export default function App() {
         <View style={styles.landscapeRow}>
           <PlayerSidebar playerSign={-1} />
           <View style={styles.centerStage}>
-            {currentPlayer === 1 && (
-              <CenteredDiceBar
-                getStatusText={getStatusText} handleRoll={handleRoll}
-                isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
-                dieSize={dieSize}
-              />
-            )}
+            {/* Both dice bars render for every turn — board's vertical
+                position stays pinned because the white-bar / board / black-bar
+                column has constant total content height (US-004). */}
+            <CenteredDiceBar
+              playerSign={1}
+              getStatusText={getStatusText} handleRoll={handleRoll}
+              isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
+              dieSize={dieSize}
+            />
             <BoardContent
               isLandscape={true} boardAnimatedStyle={boardAnimatedStyle}
               showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
@@ -1011,13 +1061,12 @@ export default function App() {
               dieSize={dieSize}
               onPointPressOverride={wrappedPointPress}
             />
-            {currentPlayer === -1 && (
-              <CenteredDiceBar
-                getStatusText={getStatusText} handleRoll={handleRoll}
-                isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
-                dieSize={dieSize}
-              />
-            )}
+            <CenteredDiceBar
+              playerSign={-1}
+              getStatusText={getStatusText} handleRoll={handleRoll}
+              isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
+              dieSize={dieSize}
+            />
             <SpecialRollCard
               onAcknowledgeSkip={wrappedAckSkip} onChoose63={wrappedChoose63}
               onChooseDouble={wrappedChooseDouble} onConfirmSpecial={wrappedConfirmSpecial}
@@ -1181,6 +1230,10 @@ const styles = StyleSheet.create({
   },
 
   // ── Portrait per-player dice bar (mirrored top / normal bottom) ─────────────
+  // `minHeight` reserves vertical space so the bar doesn't grow/shrink as its
+  // inner DicePanel transitions between waiting / rolled-result / no-moves
+  // states. Without this, the parent `mainContent` re-centers and the board
+  // shifts vertically across turns (US-004).
   playerBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1194,6 +1247,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)',
     gap: 8,
     overflow: 'hidden',
+    minHeight: 96,
   },
   playerBarFlash: {
     ...StyleSheet.absoluteFillObject,

@@ -3,13 +3,15 @@ import { View, StyleSheet, Animated, Easing, useWindowDimensions, LayoutChangeEv
 import { useGameStore } from '../store/useGameStore';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
 import { useAudioManager } from '../audio/useAudioManager';
-import { BOARD_ASPECT, getOccupancyRects, type Rect } from './boardConstants';
+import { BOARD_ASPECT, BOARD_FROZEN, getOccupancyRects, type Rect } from './boardConstants';
 import {
   BOARD_DIE_SCALE,
   LANDING_POP_MS,
   LANDING_POP_SCALE,
+  PHYSICS_FRAME_DT_MS,
+  ROLL_HARD_CAP_MS,
   getRollDurationMs,
-  pickPairLandingPoints,
+  simulateDiceFlight,
 } from '../animations/diceConstants';
 
 // ── Die Face for Overlay ──────────────────────────────────────────────────────
@@ -128,9 +130,21 @@ export const ThrowingDiceOverlay: React.FC<{
     layoutRef.current = { width, height };
   };
 
+  // Track the rAF tick driving the physics playback so a fresh roll can
+  // cancel the previous simulation cleanly.
+  const tickHandleRef = useRef<number | null>(null);
+
+  const cancelTick = () => {
+    if (tickHandleRef.current !== null) {
+      cancelAnimationFrame(tickHandleRef.current);
+      tickHandleRef.current = null;
+    }
+  };
+
   const animateThrow = (values: [number, number]) => {
     setAnimating(true);
     setLandedDice(null);
+    cancelTick();
 
     // Kick off face tumble — change shown values every ~70ms until landing.
     if (tumbleTimerRef.current) clearInterval(tumbleTimerRef.current);
@@ -162,90 +176,200 @@ export const ThrowingDiceOverlay: React.FC<{
     const frameHeight = Math.min(layoutH, frameWidth / BOARD_ASPECT);
     const frameTopOffset = Math.max(0, layoutH - frameHeight);
 
-    // Collision-aware landing: rejection-sample two non-overlapping points
-    // that miss every occupied checker stack.
-    const occupied: Rect[] = getOccupancyRects(board, frameWidth, frameHeight);
-    const [pA, pB] = pickPairLandingPoints(frameWidth, frameHeight, dieSize, occupied);
-    const landings = [pA, pB].map(p => ({
-      x: p.x - dieSize / 2,
-      y: p.y + frameTopOffset - dieSize / 2,
-    }));
+    // Forbidden rects fed to the simulator (US-007 elastic walls already
+    // covered by `walls`; US-010 occlusion guard uses `forbiddenRects`):
+    //   • Every occupied checker stack — preserves the existing avoidance.
+    //   • The center bar strip — the Move-Dice / pip-indicator zone the
+    //     player must always be able to see at a glance.
+    const checkerRects: Rect[] = getOccupancyRects(board, frameWidth, frameHeight);
+    const FRAME_BORDER = 8;
+    const innerW = frameWidth - FRAME_BORDER * 2;
+    const barW = innerW * BOARD_FROZEN.BAR_WIDTH_RATIO;
+    const barCenterX = FRAME_BORDER + (innerW - barW) / 2 + barW / 2;
+    const barRect: Rect = {
+      x: barCenterX - barW / 2,
+      y: FRAME_BORDER,
+      w: barW,
+      h: frameHeight - FRAME_BORDER * 2,
+    };
+    const forbiddenRects: Rect[] = [...checkerRects, barRect];
 
-    // Start position: off-board, on the throwing player's edge of the
-    // overlay. Equal travel distance preserves physics parity.
-    const startX = layoutW / 2 - dieSize / 2;
-    const startY = fromTop ? -dieSize * 2 : layoutH + dieSize;
+    // Initial pose: off-board on the throwing player's edge, launched
+    // toward the play area at high velocity. The simulator handles wall
+    // reflections, dice-on-dice collisions, and the rest pose.
+    const half = dieSize / 2;
+    const startCenterX = frameWidth / 2;
+    const startCenterY = fromTop ? FRAME_BORDER + half : frameHeight - FRAME_BORDER - half;
+    const launchSign = fromTop ? 1 : -1;
+    // Px/ms — chosen so a typical throw covers the board diagonal in <1.5s
+    // before friction takes over.
+    const baseSpeed = 0.85 * Math.min(2.5, Math.max(0.7, velocity));
+    const startA = {
+      x: startCenterX - dieSize * 0.6,
+      y: startCenterY,
+      vx: (Math.random() - 0.5) * baseSpeed * 0.6,
+      vy: launchSign * baseSpeed,
+      theta: 0,
+      omega: (Math.random() * 0.025 + 0.015) * (fromTop ? 1 : -1),
+    };
+    const startB = {
+      x: startCenterX + dieSize * 0.6,
+      y: startCenterY,
+      vx: (Math.random() - 0.5) * baseSpeed * 0.6,
+      vy: launchSign * baseSpeed * (0.85 + Math.random() * 0.3),
+      theta: 0,
+      omega: (Math.random() * 0.025 + 0.015) * (fromTop ? -1 : 1),
+    };
 
-    diceAnims.forEach(a => a.setValue({ x: startX, y: startY }));
-    diceRotations.forEach(r => r.setValue(0));
-    diceScales.forEach(s => s.setValue(1.6)); // Start large
-    diceOpacities.forEach(o => o.setValue(1));
-
-    // Randomized roll duration — shared with audio so the shake SFX runs
-    // for exactly the flight window.
-    const rollDurationMs = getRollDurationMs();
-    lastRollDurationRef.current = rollDurationMs;
-    audio.playShakeFor(rollDurationMs);
-
-    const intensity = Math.min(3, Math.max(0.8, velocity));
-
-    const animations = diceAnims.map((anim, i) => {
-      return Animated.parallel([
-        Animated.timing(anim, {
-          toValue: { x: landings[i].x, y: landings[i].y },
-          duration: rollDurationMs,
-          useNativeDriver: true,
-          easing: Easing.bezier(0.1, 0.7, 0.2, 1),
-        }),
-        Animated.timing(diceRotations[i], {
-          // Mirror tumble direction so White's dice spin counter-clockwise,
-          // matching the reversed flight path.
-          toValue: (6 + Math.random() * 10) * intensity * (fromTop ? -1 : 1),
-          duration: rollDurationMs,
-          useNativeDriver: true,
-        }),
-        Animated.timing(diceScales[i], {
-          toValue: BOARD_DIE_SCALE,
-          duration: rollDurationMs,
-          useNativeDriver: true,
-          easing: Easing.out(Easing.cubic),
-        }),
-      ]);
+    const sim = simulateDiceFlight({
+      walls: {
+        left: FRAME_BORDER,
+        right: frameWidth - FRAME_BORDER,
+        top: FRAME_BORDER,
+        bottom: frameHeight - FRAME_BORDER,
+      },
+      forbiddenRects,
+      dieSize,
+      startA,
+      startB,
+      hardCapMs: ROLL_HARD_CAP_MS,
     });
 
-    Animated.parallel(animations).start(() => {
-      if (tumbleTimerRef.current) {
-        clearInterval(tumbleTimerRef.current);
-        tumbleTimerRef.current = null;
+    // Visual playback duration: bounded by ROLL_HARD_CAP_MS (US-009) but
+    // randomized within [ROLL_DURATION_MIN_MS, ROLL_HARD_CAP_MS] so each
+    // roll feels a little different. The simulation runs to
+    // sim.simDurationMs and freezes; we play that real duration so motion
+    // matches what the audio and tumble loop expect.
+    const flightMs = Math.min(sim.simDurationMs || getRollDurationMs(), ROLL_HARD_CAP_MS);
+    lastRollDurationRef.current = flightMs;
+    audio.playShakeFor(flightMs);
+
+    // Initial transform values (top-left corner coords for the View).
+    const initialA = sim.framesA[0];
+    const initialB = sim.framesB[0];
+    diceAnims[0].setValue({ x: initialA.x - half, y: initialA.y + frameTopOffset - half });
+    diceAnims[1].setValue({ x: initialB.x - half, y: initialB.y + frameTopOffset - half });
+    diceRotations[0].setValue(initialA.theta);
+    diceRotations[1].setValue(initialB.theta);
+    diceScales.forEach(s => s.setValue(1.6));
+    diceOpacities.forEach(o => o.setValue(1));
+
+    // Drive the per-frame poses with rAF — JS-thread updates to
+    // Animated.Value with useNativeDriver:false. Total frames ≤ 188
+    // (3000ms / 16ms + 1) so this is well under React Native's bridge
+    // budget for the flight window.
+    const t0 = Date.now();
+    const totalFrames = sim.framesA.length;
+    const frameDt = PHYSICS_FRAME_DT_MS;
+
+    // Audio scheduling cursors — advanced as the playback frameIdx crosses
+    // each event's frame index. US-012 collision, US-014 per-die land.
+    let collisionCursor = 0;
+    let dieALandFired = false;
+    let dieBLandFired = false;
+
+    // Per-die roll cue. With the US-015 Path-A asset (a real ~70 s
+    // multi-throw recording shared by both dice), firing twice would just
+    // restart the same Sound instance and stomp the first fire. Keep a
+    // single trigger; the user's recording already has the natural texture
+    // of two physical dice baked in. The second-die slot is preserved in
+    // the API so a future per-die-index Sound cache can light it up
+    // without changing call sites.
+    audio.playDieRoll(0, flightMs);
+
+    const tick = () => {
+      const elapsed = Date.now() - t0;
+      const frameIdx = Math.min(totalFrames - 1, Math.floor(elapsed / frameDt));
+      const fA = sim.framesA[frameIdx];
+      const fB = sim.framesB[frameIdx];
+      diceAnims[0].setValue({ x: fA.x - half, y: fA.y + frameTopOffset - half });
+      diceAnims[1].setValue({ x: fB.x - half, y: fB.y + frameTopOffset - half });
+      diceRotations[0].setValue(fA.theta);
+      diceRotations[1].setValue(fB.theta);
+
+      // US-012: fire collision SFX as we cross each pre-computed
+      // collision frame. The audio layer's COLLISION_MIN_GAP_MS is the
+      // last line of defence against rapid skim contacts.
+      while (collisionCursor < sim.collisionFrames.length
+             && sim.collisionFrames[collisionCursor] <= frameIdx) {
+        audio.playDieCollision();
+        collisionCursor++;
       }
-      setTumbleFaces(values);
-      setLandedDice(values);
-      setAnimating(false);
-      // Landing: one thud per roll, plus a brief scale pop on each die.
-      audio.playDiceLand();
-      const popUpMs = 80;
-      const popDownMs = Math.max(40, LANDING_POP_MS - popUpMs);
-      diceScales.forEach(s => {
-        Animated.sequence([
-          Animated.timing(s, {
-            toValue: BOARD_DIE_SCALE * LANDING_POP_SCALE,
-            duration: popUpMs,
-            useNativeDriver: true,
-            easing: Easing.out(Easing.quad),
-          }),
-          Animated.timing(s, {
-            toValue: BOARD_DIE_SCALE,
-            duration: popDownMs,
-            useNativeDriver: true,
-            easing: Easing.out(Easing.quad),
-          }),
-        ]).start();
-      });
+
+      // US-014: fire per-die land SFX when each die individually settles.
+      if (!dieALandFired && frameIdx >= sim.restFrameA) {
+        audio.playDieLand(0);
+        dieALandFired = true;
+      }
+      if (!dieBLandFired && frameIdx >= sim.restFrameB) {
+        audio.playDieLand(1);
+        dieBLandFired = true;
+      }
+
+      if (elapsed >= flightMs) {
+        // Hard-snap to final pose (US-009): the simulation may have
+        // settled before flightMs but never after — clamp to the
+        // deterministic last frame either way.
+        const finalA = sim.finalA;
+        const finalB = sim.finalB;
+        diceAnims[0].setValue({ x: finalA.x - half, y: finalA.y + frameTopOffset - half });
+        diceAnims[1].setValue({ x: finalB.x - half, y: finalB.y + frameTopOffset - half });
+        diceRotations[0].setValue(finalA.theta);
+        diceRotations[1].setValue(finalB.theta);
+        onFlightComplete(values);
+        return;
+      }
+      tickHandleRef.current = requestAnimationFrame(tick);
+    };
+    tickHandleRef.current = requestAnimationFrame(tick);
+
+    // In-flight scale: shrink from tray scale to board scale over the
+    // flight. This stays on the native driver since it doesn't depend on
+    // simulation output.
+    diceScales.forEach(s => {
+      Animated.timing(s, {
+        toValue: BOARD_DIE_SCALE,
+        duration: flightMs,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start();
+    });
+  };
+
+  const onFlightComplete = (values: [number, number]) => {
+    cancelTick();
+    if (tumbleTimerRef.current) {
+      clearInterval(tumbleTimerRef.current);
+      tumbleTimerRef.current = null;
+    }
+    setTumbleFaces(values);
+    setLandedDice(values);
+    setAnimating(false);
+    // Landing: one thud per roll, plus a brief scale pop on each die.
+    audio.playDiceLand();
+    const popUpMs = 80;
+    const popDownMs = Math.max(40, LANDING_POP_MS - popUpMs);
+    diceScales.forEach(s => {
+      Animated.sequence([
+        Animated.timing(s, {
+          toValue: BOARD_DIE_SCALE * LANDING_POP_SCALE,
+          duration: popUpMs,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.quad),
+        }),
+        Animated.timing(s, {
+          toValue: BOARD_DIE_SCALE,
+          duration: popDownMs,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.quad),
+        }),
+      ]).start();
     });
   };
 
   useEffect(() => () => {
     if (tumbleTimerRef.current) clearInterval(tumbleTimerRef.current);
+    cancelTick();
   }, []);
 
   // Nothing to show
@@ -263,8 +387,12 @@ export const ThrowingDiceOverlay: React.FC<{
                 { translateX: anim.x },
                 { translateY: anim.y },
                 { rotate: diceRotations[i].interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg'],
+                    // Physics theta is in radians; map π rad → 180°.
+                    // `extrapolate: 'extend'` handles accumulated rotations
+                    // outside [-π, π] without clamping.
+                    inputRange: [-Math.PI, Math.PI],
+                    outputRange: ['-180deg', '180deg'],
+                    extrapolate: 'extend',
                   })
                 },
                 { scale: diceScales[i] },
@@ -288,8 +416,12 @@ export const ThrowingDiceOverlay: React.FC<{
                 { translateX: anim.x },
                 { translateY: anim.y },
                 { rotate: diceRotations[i].interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg'],
+                    // Physics theta is in radians; map π rad → 180°.
+                    // `extrapolate: 'extend'` handles accumulated rotations
+                    // outside [-π, π] without clamping.
+                    inputRange: [-Math.PI, Math.PI],
+                    outputRange: ['-180deg', '180deg'],
+                    extrapolate: 'extend',
                   })
                 },
                 { scale: diceScales[i] },

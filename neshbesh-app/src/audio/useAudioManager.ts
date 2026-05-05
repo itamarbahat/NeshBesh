@@ -21,6 +21,11 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Audio, AVPlaybackSource } from 'expo-av';
 
 // ── Sound event names ─────────────────────────────────────────────────────────
+// Per-die events (US-011): roll / land / collision are split per-die so
+// the staggered playback in US-014 can address each die independently.
+// `bearOff` (US-013) is a distinct percussive cue for a checker leaving
+// the board. All four are wired into the upcoming reference recording in
+// US-015 — until then, callers tolerate `null` assets and silently no-op.
 export type SoundEvent =
   | 'rollDice'
   | 'movePiece'
@@ -30,19 +35,61 @@ export type SoundEvent =
   | 'tableFlip'
   | 'diceShake'
   | 'diceLand'
-  | 'checkerClick';
+  | 'checkerClick'
+  | 'dieRoll'
+  | 'dieLand'
+  | 'dieCollision'
+  | 'bearOff';
 
 const SOUND_ASSETS: Record<SoundEvent, AVPlaybackSource | null> = {
   rollDice: null,
+  // movePiece is intentionally null — the user's reference recording is
+  // wired to `checkerClick` and App.tsx fires both on every move; keeping
+  // movePiece null prevents a double-trigger.
   movePiece: null,
   eatPiece: null,
   championshipWin: null,
   specialRoll: null,
   tableFlip: null,
-  diceShake: require('../../assets/sfx/dice-shake-loop.wav'),
-  diceLand: require('../../assets/sfx/dice-land.wav'),
-  checkerClick: require('../../assets/sfx/checker-click.wav'),
+  // Legacy procedural shake / land suppressed: `dieRoll` carries the full
+  // throw recording (shake + land), so the loops below would only stack a
+  // second layer on top of it. Kept as null so the US-014 self-suppression
+  // gate has nothing to suppress and the loaders just return null.
+  diceShake: null,
+  diceLand: null,
+  // US-015 — reference-derived audio (Path A: real recordings, soft volume).
+  //   • dieRoll: user's `dice shrowing sound.mp3`. The file contains many
+  //     throws back-to-back; we play it from position 0 each time so each
+  //     trigger uses the first throw segment. Played at low volume (0.25)
+  //     for the "soft and light" character requested.
+  //   • dieLand: null. The throw recording already includes the landing
+  //     impact, so a separate land cue would double-trigger.
+  //   • dieCollision: procedural high-bandpass tick (`die-collision.wav`),
+  //     soft amplitude. Sits inside the throw recording without competing.
+  //   • bearOff: procedural bell-like chime (`bear-off.wav`), distinct
+  //     from the user's moving recording so bear-off has its own cue
+  //     layered on top of the regular move sound (per US-013 spec).
+  //   • checkerClick: user's `moving sound.mp3`, played softly on every
+  //     successful checker move (including bear-off, where `bearOff`
+  //     plays alongside it for the layered cue).
+  dieRoll: require('../../assets/sfx/dice-throw.mp3'),
+  dieLand: null,
+  dieCollision: require('../../assets/sfx/die-collision.wav'),
+  bearOff: require('../../assets/sfx/bear-off.wav'),
+  checkerClick: require('../../assets/sfx/checker-move.mp3'),
 };
+
+// Collision-rate limiter — US-012 plays one tick per discrete contact event,
+// not one per integration tick when bodies skim. Earliest wall-clock at which
+// a new collision SFX may fire.
+let collisionEarliestMs = 0;
+const COLLISION_MIN_GAP_MS = 90;
+
+// Die-roll stop timer — the user's reference recording is ~70 s of
+// continuous throws; we let only the first ~throw segment play and stop the
+// rest at the natural end of the flight so it does not bleed into the
+// player's move phase.
+let dieRollStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Singleton sound cache ─────────────────────────────────────────────────────
 const soundCache: Partial<Record<SoundEvent, Audio.Sound>> = {};
@@ -169,6 +216,13 @@ export interface AudioManager {
   playShakeFor: (durationMs: number) => void;
   playDiceLand: () => void;
   playCheckerClick: () => void;
+  // US-011 per-die surface — staggered roll/land per die index, plus
+  // collision (US-012) and bear-off (US-013). All silently no-op when
+  // their underlying asset is `null` (until US-015 lands assets).
+  playDieRoll: (dieIndex: 0 | 1, durationMs: number) => void;
+  playDieLand: (dieIndex: 0 | 1) => void;
+  playDieCollision: () => void;
+  playBearOff: () => void;
 }
 
 /**
@@ -219,15 +273,59 @@ export function useAudioManager(): AudioManager {
   }, []);
 
   const playShakeFor = useCallback((durationMs: number) => {
+    // US-014: once per-die roll assets are loaded (US-015), the per-die
+    // layer carries the rolling SFX and the shake-loop layer is suppressed
+    // here to avoid double-triggering. While `dieRoll` is still null, the
+    // legacy shake layer remains the only audible roll texture.
+    if (SOUND_ASSETS.dieRoll != null) return;
     playShakeForInternal(durationMs);
   }, []);
 
   const playDiceLand = useCallback(() => {
+    // Same gate as playShakeFor — let the per-die land cues drive the
+    // landing layer once US-015 lands a `dieLand` asset.
+    if (SOUND_ASSETS.dieLand != null) return;
     playSound('diceLand', 0.85);
   }, []);
 
   const playCheckerClick = useCallback(() => {
-    playSound('checkerClick', 0.55);
+    // Soft per-move cue using the user's reference recording (US-015).
+    playSound('checkerClick', 0.30);
+  }, []);
+
+  // US-011 per-die surface. `dieIndex` is reserved so future stereo panning
+  // (left=0, right=1) can be wired without changing the call site.
+  // Schedules a stop ~200 ms after the flight so the long shared recording
+  // never bleeds into the move phase.
+  const playDieRoll = useCallback((dieIndex: 0 | 1, durationMs: number) => {
+    if (dieRollStopTimer) { clearTimeout(dieRollStopTimer); dieRollStopTimer = null; }
+    playSound('dieRoll', dieIndex === 0 ? 0.25 : 0.18);
+    const stopAtMs = Math.max(400, durationMs + 200);
+    dieRollStopTimer = setTimeout(() => {
+      dieRollStopTimer = null;
+      const cached = soundCache.dieRoll;
+      if (cached) {
+        cached.stopAsync().catch(() => {});
+      }
+    }, stopAtMs);
+  }, []);
+
+  const playDieLand = useCallback((_dieIndex: 0 | 1) => {
+    // Asset is null in US-015 — the throw recording carries the landing.
+    playSound('dieLand', 0.30);
+  }, []);
+
+  const playDieCollision = useCallback(() => {
+    const now = Date.now();
+    if (now < collisionEarliestMs) return;
+    collisionEarliestMs = now + COLLISION_MIN_GAP_MS;
+    playSound('dieCollision', 0.40);
+  }, []);
+
+  const playBearOff = useCallback(() => {
+    // Distinct chime layered on top of the regular move cue (per user
+    // spec: "different sound from regular moves" at bear-off).
+    playSound('bearOff', 0.55);
   }, []);
 
   return {
@@ -240,6 +338,10 @@ export function useAudioManager(): AudioManager {
     playShakeFor,
     playDiceLand,
     playCheckerClick,
+    playDieRoll,
+    playDieLand,
+    playDieCollision,
+    playBearOff,
   };
 }
 
