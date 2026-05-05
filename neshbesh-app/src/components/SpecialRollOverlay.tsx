@@ -56,6 +56,7 @@ export const SpecialRollOverlay: React.FC = () => {
       finalHighlights: [],
       moveLocked: false,
       neshStrikeFreeMovesLeft: 0,
+      neshStrikeStartedOnBar: false,
       is51FourMove: false,
       blockedDoubleStreak: 0,
       message: null,

@@ -33,7 +33,7 @@
 *   **6:5 (The Nesh Strike)**:
     *   All opponent "blots" (columns with exactly 1 piece) are automatically moved to the Bar.
     *   Player performs 2 "Free Moves" to any non-blocked column on the board.
-    *   **Bar restriction**: When the player is on the Bar, the FIRST free move must originate from the bar checker and land in opponent's home (i.e. it is the bar entry, restricted to non-blocked points in opponent's home territory). The SECOND free move is unrestricted on the board. If opponent's home is fully blocked, both free moves are forfeited and the turn ends.
+    *   **Bar restriction**: When the player STARTS the 6:5 turn on the Bar, BOTH free moves must land in opponent's home territory (non-blocked points only). The FIRST move's source is forced to be the bar checker (= bar entry); the SECOND move's source can be any of the player's checkers, but its destination is still restricted to opponent's home. If opponent's home is fully blocked, both free moves are forfeited and the turn ends.
 *   **6:3**: Choice - Play 6:3 or Re-roll (re-roll keeps the double-counter active).
 *   **5:2**: Move 5 and 2 (or 7) BACKWARDS.
     *   **Bar exception**: If the player has a piece on the Bar, entering from the Bar is FORWARD using one of {5, 2} and counts as the first move. The remaining die is then played BACKWARDS from a **different** piece on the board. If two or more bar pieces exist, both dice are used for forward entry (no backward move).

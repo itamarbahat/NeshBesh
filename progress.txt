@@ -93,12 +93,15 @@
   dice-snapshot check (so a manual mid-cooldown roll does not fire a duplicate
   auto-roll). `streak === 3` → `phase=TABLE_FLIP`. Streak resets on any
   non-blocked roll, every successful double, and `resetTurnState`.
-- **US-010 (6:5 free-move bar restriction)** — `handlePointPress` Nesh-Strike
-  branch now computes `onBarFirstMove = neshStrikeFreeMovesLeft === 2 &&
-  hasBarPieces(board, sign)`. When true, the source must equal the bar slot
-  and finals come from `getFreeMoveFinals(board, sign, true)`. Second move
-  uses the unrestricted form. rollDice's 6:5 trigger pre-checks if opponent's
-  home is fully blocked → forfeits both moves and SKIPs the turn.
+- **US-010 (6:5 free-move bar restriction)** — final shape:
+  `neshStrikeStartedOnBar` is latched true at the 6:5 trigger when the player
+  has bar pieces. While the latch is true, BOTH free-move destinations are
+  restricted to opponent's home (`getFreeMoveFinals(board, sign, true)`); the
+  FIRST move's source is forced to be the bar checker, the SECOND move's
+  source is any of the player's checkers. When the latch is false (player
+  did not start on Bar), both moves are unrestricted. rollDice's 6:5 trigger
+  pre-checks if opponent's home is fully blocked → forfeits both moves and
+  SKIPs the turn. Reset by `resetTurnState`.
 - **US-011 (last-piece exception removed)** — confirmed no code path ever
   reduced `neshStrikeFreeMovesLeft` from 2 to 1; CLAUDE.md §2 6:5 bullet
   rewritten to describe the new bar-first/then-free behavior.

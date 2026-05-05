@@ -50,6 +50,13 @@ export interface NeshBeshState {
   // 6:5 Nesh Strike free moves
   neshStrikeFreeMovesLeft: number;
 
+  // 6:5 Nesh Strike: latched true at the moment of the trigger if the player
+  // had bar pieces. When set, BOTH free moves' destinations are restricted to
+  // the opponent's home territory (the first move is the bar entry; the second
+  // move keeps the same target restriction even after the bar is cleared).
+  // When false, both moves are unrestricted.
+  neshStrikeStartedOnBar: boolean;
+
   // 5:1 four-move mode: rolled die value `d` grants 4 moves of value `d`.
   // Bar-entry and bear-off each consume one of the four moves (engine handles
   // pip math via getDiceAfterMove); this flag exists so future code can
@@ -104,6 +111,7 @@ const resetTurnState = (player: PlayerSign) => ({
   finalHighlights: [] as number[],
   moveLocked: false,
   neshStrikeFreeMovesLeft: 0,
+  neshStrikeStartedOnBar: false,
   is51FourMove: false,
   blockedDoubleStreak: 0,
   message: null as string | null,
@@ -259,6 +267,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     finalHighlights: [],
     moveLocked: false,
     neshStrikeFreeMovesLeft: 0,
+    neshStrikeStartedOnBar: false,
     is51FourMove: false,
     blockedDoubleStreak: 0,
     score: initialScore,
@@ -375,13 +384,18 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       }
       if (is(6, 5)) {
         const { board: nb, blotsCaptured } = applyNeshStrike(board, sign);
-        // US-010: if on Bar and opponent home is fully blocked, free moves
-        // cannot be played — turn is forfeited.
-        if (hasBarPieces(nb, sign) && getFreeMoveFinals(nb, sign, true).length === 0) {
+        // Latch "started on Bar" so BOTH free moves stay restricted to
+        // opponent's home for the duration of this 6:5 turn — even after the
+        // bar piece has entered and the bar is technically empty.
+        const startedOnBar = hasBarPieces(nb, sign);
+        // If the player started on the Bar AND opponent's home is fully blocked,
+        // free moves cannot be played — turn is forfeited.
+        if (startedOnBar && getFreeMoveFinals(nb, sign, true).length === 0) {
           set({
             board: nb, dice: [d1, d2], doublesCount: 0,
             phase: 'SKIP', availableDice: [],
             neshStrikeFreeMovesLeft: 0,
+            neshStrikeStartedOnBar: false,
             selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
             message: '6:5 — בית היריב חסום, אין כניסה',
           });
@@ -391,6 +405,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           board: nb, dice: [d1, d2], doublesCount: 0,
           phase: 'SPECIAL_NESH_STRIKE_FREE_MOVE',
           neshStrikeFreeMovesLeft: 2, availableDice: [],
+          neshStrikeStartedOnBar: startedOnBar,
           selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
           message: `NESH STRIKE! ${blotsCaptured} blot${blotsCaptured !== 1 ? 's' : ''} sent to the Bar. 2 free moves!`,
         });
@@ -496,20 +511,25 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
       // ── Nesh Strike free moves ──────────────────────────────────────────────
       if (phase === 'SPECIAL_NESH_STRIKE_FREE_MOVE') {
-        // US-010: when 2 moves remain AND the player is on the Bar, the FIRST
-        // free move must originate from the bar checker and land in opponent's
-        // home (= bar entry). The SECOND free move is unrestricted.
-        const onBarFirstMove = state.neshStrikeFreeMovesLeft === 2 && hasBarPieces(board, sign);
+        // Restriction model:
+        //   • If the player STARTED this turn on the Bar (neshStrikeStartedOnBar
+        //     is latched true at the 6:5 trigger), BOTH free-move destinations
+        //     are restricted to opponent's home territory. The FIRST move's
+        //     source is also forced to be the bar checker (it's the bar entry);
+        //     the SECOND move's source can be any of the player's checkers.
+        //   • Otherwise both moves are unrestricted (source = any, target = any
+        //     non-blocked board point).
+        const startedOnBar = state.neshStrikeStartedOnBar;
+        const isFirstMove = state.neshStrikeFreeMovesLeft === 2;
+        const mustSelectBar = startedOnBar && isFirstMove;
         const barIdx = sign === 1 ? 0 : 25;
-        const finalsFor = (idx: number): number[] => {
-          if (onBarFirstMove && idx !== barIdx) return [];
-          return getFreeMoveFinals(board, sign, onBarFirstMove);
-        };
+        const targetRestricted = startedOnBar; // both moves restricted when started on bar
+        const finalsFromSource = (): number[] => getFreeMoveFinals(board, sign, targetRestricted);
 
         if (selectedIndex === null) {
-          if (onBarFirstMove && index !== barIdx) return;
+          if (mustSelectBar && index !== barIdx) return;
           if (Math.sign(board[index]) === sign) {
-            set({ selectedIndex: index, finalHighlights: finalsFor(index), intermediateHighlights: [], moveLocked: false });
+            set({ selectedIndex: index, finalHighlights: finalsFromSource(), intermediateHighlights: [], moveLocked: false });
           }
         } else if (finalHighlights.includes(index)) {
           const { board: nb, captured } = applyMove(board, selectedIndex, index, sign);
@@ -527,8 +547,8 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
             endTurnImpl();
           }
         } else if (Math.sign(board[index]) === sign) {
-          if (onBarFirstMove && index !== barIdx) return;
-          set({ selectedIndex: index, finalHighlights: finalsFor(index), intermediateHighlights: [], moveLocked: false });
+          if (mustSelectBar && index !== barIdx) return;
+          set({ selectedIndex: index, finalHighlights: finalsFromSource(), intermediateHighlights: [], moveLocked: false });
         }
         return;
       }
@@ -735,13 +755,18 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       }
       if (is(6, 5)) {
         const { board: nb, blotsCaptured } = applyNeshStrike(board, sign);
-        // US-010: if on Bar and opponent home is fully blocked, free moves
-        // cannot be played — turn is forfeited.
-        if (hasBarPieces(nb, sign) && getFreeMoveFinals(nb, sign, true).length === 0) {
+        // Latch "started on Bar" so BOTH free moves stay restricted to
+        // opponent's home for the duration of this 6:5 turn — even after the
+        // bar piece has entered and the bar is technically empty.
+        const startedOnBar = hasBarPieces(nb, sign);
+        // If the player started on the Bar AND opponent's home is fully blocked,
+        // free moves cannot be played — turn is forfeited.
+        if (startedOnBar && getFreeMoveFinals(nb, sign, true).length === 0) {
           set({
             board: nb, dice: [d1, d2], doublesCount: 0,
             phase: 'SKIP', availableDice: [],
             neshStrikeFreeMovesLeft: 0,
+            neshStrikeStartedOnBar: false,
             selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
             message: '6:5 — בית היריב חסום, אין כניסה',
           });
@@ -751,6 +776,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           board: nb, dice: [d1, d2], doublesCount: 0,
           phase: 'SPECIAL_NESH_STRIKE_FREE_MOVE',
           neshStrikeFreeMovesLeft: 2, availableDice: [],
+          neshStrikeStartedOnBar: startedOnBar,
           selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
           message: `NESH STRIKE! ${blotsCaptured} blot${blotsCaptured !== 1 ? 's' : ''} sent to the Bar. 2 free moves!`,
         });
