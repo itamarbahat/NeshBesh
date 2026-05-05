@@ -20,10 +20,17 @@ interface Props {
 export const RemoteBottomBar: React.FC<Props> = ({
   mySign, getStatusText, handleRoll, isSingleDiePhase, endTurnOverride, dieSize,
 }) => {
-  const {
-    currentPlayer, whiteBorneOff, blackBorneOff, phase, dice, availableDice,
-    board, backward, endTurn,
-  } = useGameStore();
+  // Narrowed selectors — bottom bar is permanently mounted; a full subscription
+  // re-renders the DicePanel on every highlight/message tick.
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const whiteBorneOff = useGameStore((s) => s.whiteBorneOff);
+  const blackBorneOff = useGameStore((s) => s.blackBorneOff);
+  const phase = useGameStore((s) => s.phase);
+  const dice = useGameStore((s) => s.dice);
+  const availableDice = useGameStore((s) => s.availableDice);
+  const board = useGameStore((s) => s.board);
+  const backward = useGameStore((s) => s.backward);
+  const endTurn = useGameStore((s) => s.endTurn);
 
   const isMyTurn = currentPlayer === mySign;
   const end = endTurnOverride || endTurn;

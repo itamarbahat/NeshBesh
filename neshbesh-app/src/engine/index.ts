@@ -29,6 +29,48 @@ export const canBearOff = (board: number[], sign: PlayerSign): boolean => {
   return true;
 };
 
+// Standard backgammon bear-off rule: a die value X may bear off a checker at
+// distance D iff X === D, OR X > D AND no checker is farther from the exit.
+// `excludedSlot` is the moving piece's original slot (its piece is conceptually
+// already in transit and must not block its own overshoot).
+export const isLegalBearOff = (
+  board: number[],
+  sign: PlayerSign,
+  fromSlot: number,
+  dieValue: number,
+  excludedSlot?: number,
+): boolean => {
+  const distance = sign === 1 ? 25 - fromSlot : fromSlot;
+  if (dieValue === distance) return true;
+  if (dieValue < distance) return false;
+  if (sign === 1) {
+    // White: farther from exit = lower index in home [19..fromSlot-1]
+    for (let i = 19; i < fromSlot; i++) {
+      if (i === excludedSlot) continue;
+      if (board[i] > 0) return false;
+    }
+  } else {
+    // Black: farther from exit = higher index in home [fromSlot+1..6]
+    for (let i = fromSlot + 1; i <= 6; i++) {
+      if (i === excludedSlot) continue;
+      if (board[i] < 0) return false;
+    }
+  }
+  return true;
+};
+
+// True iff the bar-entry target for this die is occupied by 2+ opponent
+// checkers (cannot land). Used by the blocked-double-on-Bar re-roll flow.
+export const isBarEntryBlocked = (
+  board: number[],
+  sign: PlayerSign,
+  dieValue: number,
+): boolean => {
+  const target = sign === 1 ? dieValue : 25 - dieValue;
+  if (target < 1 || target > 24) return true;
+  return Math.sign(board[target]) === -sign && Math.abs(board[target]) >= 2;
+};
+
 const isLandable = (board: number[], idx: number, sign: PlayerSign): boolean => {
   const c = board[idx];
   return Math.sign(c) !== -sign || Math.abs(c) <= 1;
@@ -45,25 +87,16 @@ export const calculatePossibleMoves = (
   backward = false,
   bearOff = false,
 ): { intermediate: number[]; final: number[] } => {
+  const cached = getCachedMoves(board, from, sign, dice, backward, bearOff);
+  if (cached) return cached;
+
   const inter = new Set<number>();
   const fin = new Set<number>();
 
-  if (dice.length === 0) return { intermediate: [], final: [] };
+  if (dice.length === 0) return cacheMoves(board, from, sign, dice, backward, bearOff, { intermediate: [], final: [] });
 
   const baseDir = sign === 1 ? 1 : -1;
   const dir = backward ? -baseDir : baseDir;
-
-  // Checks whether `idx` can be a final landing spot.
-  const isValidFinal = (idx: number): boolean => {
-    const offBoard = sign === 1 ? idx > 24 : idx < 1;
-    if (offBoard) return bearOff;
-    if (idx >= 1 && idx <= 24) return isLandable(board, idx, sign);
-    return false;
-  };
-
-  // Checks whether `idx` is a valid intermediate step (must be on-board and landable).
-  const isValidInter = (idx: number): boolean =>
-    idx >= 1 && idx <= 24 && isLandable(board, idx, sign);
 
   // Map an out-of-bounds index to its sentinel value.
   const sentinel = (idx: number): number => {
@@ -72,28 +105,45 @@ export const calculatePossibleMoves = (
     return idx;
   };
 
+  // Try to add `idx` as a final landing spot. `sourceSlot`/`dieValue` describe
+  // the bear-off attempt so the standard "must advance from higher slots first"
+  // rule (isLegalBearOff) can gate off-board landings.
+  const addFinal = (idx: number, sourceSlot: number, dieValue: number): void => {
+    const offBoard = sign === 1 ? idx > 24 : idx < 1;
+    if (offBoard) {
+      if (!bearOff) return;
+      if (!isLegalBearOff(board, sign, sourceSlot, dieValue, from)) return;
+      fin.add(sentinel(idx));
+      return;
+    }
+    if (idx >= 1 && idx <= 24 && isLandable(board, idx, sign)) fin.add(idx);
+  };
+
+  const isValidInter = (idx: number): boolean =>
+    idx >= 1 && idx <= 24 && isLandable(board, idx, sign);
+
   // --- Bar re-entry (special case) ---
   if (from === 0 && sign === 1) {
-    // White re-enters at points 1-6 (die value = target point)
+    // White re-enters at points 1-6 (die value = target point); bar entry is
+    // never a bear-off so the higher-slot rule doesn't apply.
     new Set(dice).forEach(d => {
-      if (d >= 1 && d <= 6 && isValidFinal(d)) fin.add(d);
+      if (d >= 1 && d <= 6 && isLandable(board, d, sign)) fin.add(d);
     });
-    return { intermediate: [], final: [...fin] };
+    return cacheMoves(board, from, sign, dice, backward, bearOff, { intermediate: [], final: [...fin] });
   }
   if (from === 25 && sign === -1) {
-    // Black re-enters at points 19-24 (target = 25 - die)
     new Set(dice).forEach(d => {
       const t = 25 - d;
-      if (t >= 19 && t <= 24 && isValidFinal(t)) fin.add(t);
+      if (t >= 19 && t <= 24 && isLandable(board, t, sign)) fin.add(t);
     });
-    return { intermediate: [], final: [...fin] };
+    return cacheMoves(board, from, sign, dice, backward, bearOff, { intermediate: [], final: [...fin] });
   }
 
   // --- Single die ---
   if (dice.length === 1) {
     const t = from + dir * dice[0];
-    if (isValidFinal(t)) fin.add(sentinel(t));
-    return { intermediate: [], final: [...fin] };
+    addFinal(t, from, dice[0]);
+    return cacheMoves(board, from, sign, dice, backward, bearOff, { intermediate: [], final: [...fin] });
   }
 
   // --- Two distinct (or same) dice ---
@@ -101,37 +151,90 @@ export const calculatePossibleMoves = (
     const [d1, d2] = dice;
     // Path A: d1 first, then d2
     const t1 = from + dir * d1;
-    if (isValidFinal(t1)) fin.add(sentinel(t1));
+    addFinal(t1, from, d1);
     if (isValidInter(t1)) {
       inter.add(t1);
       const f1 = t1 + dir * d2;
-      if (isValidFinal(f1)) fin.add(sentinel(f1));
+      addFinal(f1, t1, d2);
     }
     // Path B: d2 first, then d1 (only meaningful if d1 ≠ d2)
     if (d1 !== d2) {
       const t2 = from + dir * d2;
-      if (isValidFinal(t2)) fin.add(sentinel(t2));
+      addFinal(t2, from, d2);
       if (isValidInter(t2)) {
         inter.add(t2);
         const f2 = t2 + dir * d1;
-        if (isValidFinal(f2)) fin.add(sentinel(f2));
+        addFinal(f2, t2, d1);
       }
     }
-    return { intermediate: [...inter], final: [...fin] };
+    return cacheMoves(board, from, sign, dice, backward, bearOff, { intermediate: [...inter], final: [...fin] });
   }
 
   // --- Doubles (3 or 4 identical dice) ---
   const d = dice[0];
   let cur = from;
+  let prev = from;
   for (let i = 0; i < dice.length; i++) {
+    prev = cur;
     cur += dir * d;
-    const last = i === dice.length - 1;
-    if (!isValidFinal(cur)) break;
-    fin.add(sentinel(cur));
-    if (!last) inter.add(cur);
+    addFinal(cur, prev, d);
+    const offBoard = sign === 1 ? cur > 24 : cur < 1;
+    if (offBoard) break; // bear-off ends the path
+    if (!isValidInter(cur)) break;
+    if (i !== dice.length - 1) inter.add(cur);
   }
 
-  return { intermediate: [...inter].filter(x => x >= 1 && x <= 24), final: [...fin] };
+  return cacheMoves(board, from, sign, dice, backward, bearOff, {
+    intermediate: [...inter].filter(x => x >= 1 && x <= 24),
+    final: [...fin],
+  });
+};
+
+// ── Move-search cache (US-015) ──────────────────────────────────────────────
+// Path search is the Click-1 hot path. Within a single turn the (board, from,
+// dice, backward, bearOff) tuple is hit repeatedly as React re-renders consume
+// the same query. We cache by a fast string key and clear on every store
+// mutation that could change legality (turn start + after each move).
+type MoveResult = { intermediate: number[]; final: number[] };
+let _moveCache: Map<string, MoveResult> | null = null;
+
+const cacheKey = (
+  board: number[],
+  from: number,
+  sign: PlayerSign,
+  dice: number[],
+  backward: boolean,
+  bearOff: boolean,
+): string => `${board.join(',')}|${from}|${sign}|${dice.join(',')}|${backward ? 1 : 0}|${bearOff ? 1 : 0}`;
+
+const getCachedMoves = (
+  board: number[],
+  from: number,
+  sign: PlayerSign,
+  dice: number[],
+  backward: boolean,
+  bearOff: boolean,
+): MoveResult | null => {
+  if (!_moveCache) return null;
+  return _moveCache.get(cacheKey(board, from, sign, dice, backward, bearOff)) ?? null;
+};
+
+const cacheMoves = (
+  board: number[],
+  from: number,
+  sign: PlayerSign,
+  dice: number[],
+  backward: boolean,
+  bearOff: boolean,
+  result: MoveResult,
+): MoveResult => {
+  if (!_moveCache) _moveCache = new Map();
+  _moveCache.set(cacheKey(board, from, sign, dice, backward, bearOff), result);
+  return result;
+};
+
+export const resetMoveCache = (): void => {
+  _moveCache = null;
 };
 
 // Determine which dice were consumed by a move from `from` to `to`.
@@ -239,9 +342,18 @@ export const applyNeshStrike = (
 };
 
 // All valid free-move destinations for the Nesh Strike (non-blocked points).
-export const getFreeMoveFinals = (board: number[], sign: PlayerSign): number[] => {
+// When `opponentHomeOnly` is true (used for the 6:5 first free move while the
+// player is on the Bar), restrict targets to the opponent's home — i.e. the
+// player's bar-entry zone: White → slots 1..6, Black → slots 19..24.
+export const getFreeMoveFinals = (
+  board: number[],
+  sign: PlayerSign,
+  opponentHomeOnly = false,
+): number[] => {
   const valid: number[] = [];
-  for (let i = 1; i <= 24; i++) {
+  const start = opponentHomeOnly ? (sign === 1 ? 1 : 19) : 1;
+  const end = opponentHomeOnly ? (sign === 1 ? 6 : 24) : 24;
+  for (let i = start; i <= end; i++) {
     if (isLandable(board, i, sign)) valid.push(i);
   }
   return valid;

@@ -15,11 +15,15 @@ import { generateInitialBoard } from '../engine';
  * so they are no longer shown here.
  */
 export const SpecialRollOverlay: React.FC = () => {
-  const state = useGameStore();
-  const {
-    phase, score, victoryInfo, currentPlayer,
-    confirmTableFlip, startNewGame,
-  } = state;
+  // Narrow selectors so this overlay only re-renders when the fields it
+  // actually displays change. Action references are stable, fetched via getState
+  // when needed.
+  const phase = useGameStore((s) => s.phase);
+  const score = useGameStore((s) => s.score);
+  const victoryInfo = useGameStore((s) => s.victoryInfo);
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const confirmTableFlip = useGameStore((s) => s.confirmTableFlip);
+  const startNewGame = useGameStore((s) => s.startNewGame);
 
   const visible =
     phase === 'TABLE_FLIP' ||
@@ -52,6 +56,8 @@ export const SpecialRollOverlay: React.FC = () => {
       finalHighlights: [],
       moveLocked: false,
       neshStrikeFreeMovesLeft: 0,
+      is51FourMove: false,
+      blockedDoubleStreak: 0,
       message: null,
     });
   };

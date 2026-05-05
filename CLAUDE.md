@@ -24,6 +24,7 @@
 ### Turn Flow
 *   **Only regular doubles** grant an automatic extra turn. Special rolls (4:5, 6:5, 6:3, 5:2, 4:3, 5:1) do **not** grant an extra turn, even if the resulting play is a double.
 *   **3 Consecutive Doubles**: "Flip the Table" - The current player's turn ends immediately, and dice pass to the opponent.
+*   **Blocked Double on Bar**: If the player is on the Bar and rolls a double whose entry point is occupied by 2+ opponent checkers, the dice are re-rolled. Three consecutive blocked doubles in a row = "Flip the Table" (turn ends).
 *   **Initial Roll**: Each player throws one die. The player whose die is higher goes first AND plays those two dice as their first move (i.e., the initial roll doubles as both "who starts" and "opening move").
 
 ### Special Rolls
@@ -32,12 +33,17 @@
 *   **6:5 (The Nesh Strike)**:
     *   All opponent "blots" (columns with exactly 1 piece) are automatically moved to the Bar.
     *   Player performs 2 "Free Moves" to any non-blocked column on the board.
+    *   **Bar restriction**: When the player is on the Bar, the FIRST free move must originate from the bar checker and land in opponent's home (i.e. it is the bar entry, restricted to non-blocked points in opponent's home territory). The SECOND free move is unrestricted on the board. If opponent's home is fully blocked, both free moves are forfeited and the turn ends.
 *   **6:3**: Choice - Play 6:3 or Re-roll (re-roll keeps the double-counter active).
 *   **5:2**: Move 5 and 2 (or 7) BACKWARDS.
     *   **Bar exception**: If the player has a piece on the Bar, entering from the Bar is FORWARD using one of {5, 2} and counts as the first move. The remaining die is then played BACKWARDS from a **different** piece on the board. If two or more bar pieces exist, both dice are used for forward entry (no backward move).
 *   **4:3**: Manual Trigger - Player must roll 1 die. The result is the number of steps to move BACKWARDS.
     *   **Bar exception**: If the player has a piece on the Bar, after rolling the single die they enter FORWARD at that value (if possible) and the turn ends. No backward move.
-*   **5:1**: Manual Trigger - Player must roll 1 die. The result determines which Double they play (e.g., rolling a 4 = Double 4).
+*   **5:1**: Manual Trigger - Player must roll 1 die. The result `d` grants **4 moves of value `d`** (played like a double). Bar entry and bear-off each consume **one** of the four moves regardless of pip distance. Does not grant an extra turn even when `d` is itself a double.
+
+### Bear-off
+*   **Standard rule**: a die value `X` may bear off a checker at distance `D` iff `X === D`, OR `X > D` AND no other checker is farther from the exit (overshoot). With `X < D`, the die must be used to advance within the home board first.
+*   "Farther from exit" is per-side: White (exit past 24) → lower index in home `[19..24]` is farther; Black (exit past 1) → higher index in home `[1..6]` is farther.
 
 ### Scoring & Match Structure
 *   **Simple Win**: 1 Point.

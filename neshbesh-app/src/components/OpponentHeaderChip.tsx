@@ -13,7 +13,12 @@ interface Props {
 
 export const OpponentHeaderChip: React.FC<Props> = ({ mySign }) => {
   const opponentName = useMultiplayerStore((s) => s.opponentName);
-  const { currentPlayer, phase, whiteBorneOff, blackBorneOff } = useGameStore();
+  // Narrowed selectors — this chip renders on every remote game and would
+  // otherwise re-render on every selectedIndex/highlight/message tick.
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const phase = useGameStore((s) => s.phase);
+  const whiteBorneOff = useGameStore((s) => s.whiteBorneOff);
+  const blackBorneOff = useGameStore((s) => s.blackBorneOff);
 
   const opponentSign = mySign === 1 ? -1 : 1;
   const isOpponentTurn = currentPlayer === opponentSign;

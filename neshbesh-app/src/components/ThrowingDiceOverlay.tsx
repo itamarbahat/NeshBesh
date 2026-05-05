@@ -62,10 +62,15 @@ export const ThrowingDiceOverlay: React.FC<{
    *  pieceSize at the App layer so it stays proportional across devices. */
   dieSize: number;
 }> = ({ velocity = 1, dieSize }) => {
-  const { dice, phase, board } = useGameStore();
+  // Narrowed selectors — this overlay is mounted full-time, so a full-state
+  // subscription would re-render it on every store mutation (highlight changes,
+  // message updates, etc.) and thrash the animation refs.
+  const dice = useGameStore((s) => s.dice);
+  const phase = useGameStore((s) => s.phase);
+  const board = useGameStore((s) => s.board);
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
   const gameMode = useMultiplayerStore((s) => s.gameMode);
   const mpRole = useMultiplayerStore((s) => s.role);
-  const currentPlayer = useGameStore((s) => s.currentPlayer);
   const audio = useAudioManager();
   const [landedDice, setLandedDice] = useState<[number, number] | null>(null);
   const [animating, setAnimating] = useState(false);

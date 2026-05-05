@@ -68,10 +68,70 @@
   from the player's exit, computed per side (not raw array index).
 - **Performance** focuses on `calculatePossibleMoves` path search (Click 1 hot path).
 
-### Implementation notes (to be filled in during Ralph iterations)
-- US-014 baseline numbers go here once the profiling pass runs.
-- Memoization key in US-015 uses `board.join(',')` as a fast hash; revisit if
-  collisions show up under perf testing.
+### Implementation notes (2026-05-05)
+- **US-001 (bear-off rule)** — added `isLegalBearOff(board, sign, fromSlot,
+  dieValue, excludedSlot?)` to engine. The path-search `addFinal` helper now
+  gates every off-board landing by this rule. `excludedSlot` defaults to the
+  original `from` so the moving piece does not block its own overshoot.
+  "Farther from exit" is per-side: White → lower index in [19..fromSlot-1],
+  Black → higher index in [fromSlot+1..6].
+- **US-002 (`isBarEntryBlocked`)** — added to engine. Pure `(board, sign,
+  dieValue) => boolean`. Wired into the rollDice double path.
+- **US-003 (`getFreeMoveFinals` flag)** — added optional `opponentHomeOnly`
+  param. White → restricts to slots 1..6, Black → 19..24. Existing call sites
+  unchanged (default false).
+- **US-004 / US-005 / US-006 / US-007 (5:1 four-move mode)** — added
+  `is51FourMove: boolean` to the store interface and `resetTurnState`. The
+  bar branch now sets `availableDice: [d, d, d, d]` and routes through
+  `enterMovingOrSkip`. Engine's existing `getDiceAfterMove` already handles
+  bar-entry (slice one die for an exact pip match) and bear-off (smallest
+  eligible die >= distance) so consumption math needed no engine change.
+- **US-008 / US-009 (blocked double on bar)** — added `blockedDoubleStreak`
+  to the store. rollDice doubles path detects `hasBarPieces && isBarEntryBlocked`,
+  increments the streak, sets `phase=WAITING_ROLL` with a Hebrew "blocked"
+  message, and schedules `setTimeout(get().rollDice, 1200)` guarded by a
+  dice-snapshot check (so a manual mid-cooldown roll does not fire a duplicate
+  auto-roll). `streak === 3` → `phase=TABLE_FLIP`. Streak resets on any
+  non-blocked roll, every successful double, and `resetTurnState`.
+- **US-010 (6:5 free-move bar restriction)** — `handlePointPress` Nesh-Strike
+  branch now computes `onBarFirstMove = neshStrikeFreeMovesLeft === 2 &&
+  hasBarPieces(board, sign)`. When true, the source must equal the bar slot
+  and finals come from `getFreeMoveFinals(board, sign, true)`. Second move
+  uses the unrestricted form. rollDice's 6:5 trigger pre-checks if opponent's
+  home is fully blocked → forfeits both moves and SKIPs the turn.
+- **US-011 (last-piece exception removed)** — confirmed no code path ever
+  reduced `neshStrikeFreeMovesLeft` from 2 to 1; CLAUDE.md §2 6:5 bullet
+  rewritten to describe the new bar-first/then-free behavior.
+- **US-012 (5:1 dice indicator)** — no code change required. DicePanel
+  already renders the `isSpecialDouble` case (4 dice of value `availableDice[0]`
+  with greyed-out used slots) and the bar branch now feeds it the same
+  `[d, d, d, d]` shape.
+- **US-013 (blocked-double feedback)** — message string drives the existing
+  toast/overlay path. No new animation hook; the table-flip case reuses
+  `useTableFlipAnimation` via the existing `phase === 'TABLE_FLIP'` watcher
+  in App.tsx.
+- **US-015 (memoize path search)** — added a turn-scoped `Map<string,
+  MoveResult>` cache inside `engine/index.ts`. Cache key = `board.join(',')|
+  from|sign|dice.join(',')|backward|bearOff`. `resetMoveCache()` is exported
+  and called from `endTurnImpl`, after every successful `applyMove` in
+  `handlePointPress`, and after every Nesh Strike free move.
+- **US-016 (selector narrowing)** — partially landed: `SpecialRollOverlay`
+  now subscribes via narrowed `useGameStore((s) => s.field)` selectors instead
+  of the full state. `ThrowingDiceOverlay`, `OpponentHeaderChip`,
+  `RemoteBottomBar` still subscribe to the full state — flagged for a
+  follow-up pass.
+- **US-014 (perf instrumentation)** — deferred. The memoization in US-015
+  should land the bulk of the win on its own; profiling can confirm post-merge.
+- **Multiplayer sync** — new fields `is51FourMove` and `blockedDoubleStreak`
+  are host-only logic and do not drive guest rendering, so the Firebase
+  `gameState` payload in App.tsx was NOT extended. If a future story relies
+  on the guest knowing either, add them to both the host `syncGameState`
+  payload and the guest `subscribeToGameState` hydrator.
+- **CLAUDE.md** — §2 updated: new "Blocked Double on Bar" turn-flow bullet,
+  rewritten 6:5 bar restriction, rewritten 5:1 description, new "Bear-off"
+  subsection codifying the standard rule.
+- **Typecheck status** — NOT verified locally (`node`/`npm`/`tsc` not on
+  PATH). User should run `npx tsc --noEmit` from `neshbesh-app/` to verify.
 
 ### PRD-dice-polish.md — implementation notes (2026-05-05)
 - New module `src/animations/diceConstants.ts` owns all dice timing/scale

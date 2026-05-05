@@ -7,6 +7,7 @@ import {
   hasBarPieces, canBearOff, hasAnyMove,
   calculatePossibleMoves, getDiceAfterMove, applyMove,
   applyNeshStrike, getFreeMoveFinals, calculateVictory,
+  isBarEntryBlocked, resetMoveCache,
   BEAR_OFF_WHITE, BEAR_OFF_BLACK,
 } from '../engine';
 
@@ -48,6 +49,17 @@ export interface NeshBeshState {
 
   // 6:5 Nesh Strike free moves
   neshStrikeFreeMovesLeft: number;
+
+  // 5:1 four-move mode: rolled die value `d` grants 4 moves of value `d`.
+  // Bar-entry and bear-off each consume one of the four moves (engine handles
+  // pip math via getDiceAfterMove); this flag exists so future code can
+  // distinguish 5:1 from a regular double for messaging / extra-turn logic.
+  is51FourMove: boolean;
+
+  // Streak of consecutive doubles that landed on a fully-blocked bar-entry
+  // point. 3 in a row → Table Flip (US-009). Resets on any non-blocked roll
+  // or whenever the player has no bar pieces.
+  blockedDoubleStreak: number;
 
   // Scoring (first to 3 points = 1 set; first to 3 sets = championship)
   score: Score;
@@ -92,14 +104,30 @@ const resetTurnState = (player: PlayerSign) => ({
   finalHighlights: [] as number[],
   moveLocked: false,
   neshStrikeFreeMovesLeft: 0,
+  is51FourMove: false,
+  blockedDoubleStreak: 0,
   message: null as string | null,
 });
+
+// Module-scope handle for the blocked-double auto-reroll timer. Stored outside
+// Zustand state so we can cancel a pending auto-roll the instant any fresh
+// `rollDice` invocation arrives — eliminating the rare race where a manual
+// mid-cooldown roll could cause two re-rolls to chain off the same cooldown.
+let _autoRollTimeout: ReturnType<typeof setTimeout> | null = null;
+const cancelPendingAutoRoll = () => {
+  if (_autoRollTimeout !== null) {
+    clearTimeout(_autoRollTimeout);
+    _autoRollTimeout = null;
+  }
+};
 
 export const useGameStore = create<NeshBeshState>((set, get) => {
   // ─── Internal helpers ──────────────────────────────────────────────────────
 
   const endTurnImpl = () => {
     const { currentPlayer, score, board, whiteBorneOff, blackBorneOff } = get();
+    cancelPendingAutoRoll();
+    resetMoveCache();
     set({
       ...resetTurnState((-currentPlayer) as PlayerSign),
       doublesCount: 0,
@@ -231,6 +259,8 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     finalHighlights: [],
     moveLocked: false,
     neshStrikeFreeMovesLeft: 0,
+    is51FourMove: false,
+    blockedDoubleStreak: 0,
     score: initialScore,
     victoryInfo: null,
     message: null,
@@ -265,6 +295,11 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
     // ── rollDice ──────────────────────────────────────────────────────────────
     rollDice: () => {
+      // Cancel any pending blocked-double auto-reroll first. Whether this call
+      // is manual or itself an auto-fire, the previous timer is now obsolete —
+      // its result would be either redundant (we are about to roll fresh) or
+      // would chain a second re-roll off the same cooldown.
+      cancelPendingAutoRoll();
       const { phase, doublesCount, currentPlayer: sign, board } = get();
       if (phase !== 'WAITING_ROLL' && phase !== 'SPECIAL_63_CHOICE') return;
 
@@ -273,9 +308,43 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
       // ── Doubles path ────────────────────────────────────────────────────────
       if (isDouble) {
+        // US-008/009: if the player is on the Bar and the entry point is fully
+        // blocked, the doubles roll cannot be played — re-roll. 3 such blocked
+        // doubles in a row → Table Flip.
+        if (hasBarPieces(board, sign) && isBarEntryBlocked(board, sign, d1)) {
+          const newStreak = get().blockedDoubleStreak + 1;
+          if (newStreak === 3) {
+            set({
+              dice: [d1, d2], doublesCount: 0, blockedDoubleStreak: 0,
+              phase: 'TABLE_FLIP', availableDice: [],
+              message: '3 כפולים חסומים — מהפך שולחן!',
+            });
+            return;
+          }
+          set({
+            dice: [d1, d2], blockedDoubleStreak: newStreak,
+            phase: 'WAITING_ROLL', availableDice: [],
+            message: `דאבל ${d1} — כניסה חסומה, מתגלגל מחדש…`,
+          });
+          // Auto re-roll after a brief pause so the blocked message is visible.
+          // The handle is module-scope so any fresh rollDice() (manual OR a
+          // chained auto-roll) cancels this pending fire. Belt-and-braces
+          // snapshot check on phase + dice handles the case where the player
+          // navigated away between schedule and fire.
+          const snap0 = d1, snap1 = d2;
+          _autoRollTimeout = setTimeout(() => {
+            _autoRollTimeout = null;
+            const { phase: p, dice: cur } = get();
+            if (p !== 'WAITING_ROLL') return;
+            if (!cur || cur[0] !== snap0 || cur[1] !== snap1) return;
+            get().rollDice();
+          }, 1200);
+          return;
+        }
+
         const newCount = doublesCount + 1;
         if (newCount === 3) {
-          set({ dice: [d1, d2], doublesCount: 0, phase: 'TABLE_FLIP', message: 'FLIP THE TABLE! 3 consecutive doubles.' });
+          set({ dice: [d1, d2], doublesCount: 0, blockedDoubleStreak: 0, phase: 'TABLE_FLIP', message: 'FLIP THE TABLE! 3 consecutive doubles.' });
           return;
         }
         enterMovingOrSkip({
@@ -286,8 +355,12 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           backward: false,
           message: `Double ${d1}s! Extra turn granted.`,
         });
+        set({ blockedDoubleStreak: 0 });
         return;
       }
+
+      // Any non-double roll resets the blocked-double streak.
+      set({ blockedDoubleStreak: 0 });
 
       // ── Non-double specials ──────────────────────────────────────────────────
       const is = (a: number, b: number) => (d1 === a && d2 === b) || (d1 === b && d2 === a);
@@ -302,6 +375,18 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       }
       if (is(6, 5)) {
         const { board: nb, blotsCaptured } = applyNeshStrike(board, sign);
+        // US-010: if on Bar and opponent home is fully blocked, free moves
+        // cannot be played — turn is forfeited.
+        if (hasBarPieces(nb, sign) && getFreeMoveFinals(nb, sign, true).length === 0) {
+          set({
+            board: nb, dice: [d1, d2], doublesCount: 0,
+            phase: 'SKIP', availableDice: [],
+            neshStrikeFreeMovesLeft: 0,
+            selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
+            message: '6:5 — בית היריב חסום, אין כניסה',
+          });
+          return;
+        }
         set({
           board: nb, dice: [d1, d2], doublesCount: 0,
           phase: 'SPECIAL_NESH_STRIKE_FREE_MOVE',
@@ -378,20 +463,25 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         }
         set({ phase: 'SPECIAL_43_RESULT', availableDice: [d], backward: true, message: `לך אחורה ${d} צעדים` });
       } else if (phase === 'SPECIAL_51_ROLL') {
-        // Bar exception: with a bar piece, 5:1 becomes a single-die entry —
-        // enter forward at the rolled value if possible, otherwise turn ends.
+        // 5:1 always grants 4 moves of the rolled value. Bar entry and bear-off
+        // each consume one of the four moves (engine handles pip math via
+        // getDiceAfterMove). When on the Bar, the standard bar-first rule in
+        // handlePointPress forces entry as the first move; if entry is blocked
+        // and there are no other moves, enterMovingOrSkip falls through to SKIP.
         const barCount = Math.abs(board[sign === 1 ? 0 : 25]);
         if (barCount >= 1) {
           enterMovingOrSkip({
             dice: [d, d],
-            availableDice: [d],
+            availableDice: [d, d, d, d],
             backward: false,
             extraTurn: false,
-            message: `5:1 מהבר — ניסיון כניסה עם ${d}`,
+            message: `5:1 מהבר — 4 מהלכים של ${d}`,
           });
+          // Only flag if we actually transitioned to MOVING (entry not blocked).
+          if (get().phase === 'MOVING') set({ is51FourMove: true });
           return;
         }
-        set({ phase: 'SPECIAL_51_RESULT', availableDice: [d, d, d, d], backward: false, extraTurn: false, message: `שחק דאבל ${d}` });
+        set({ phase: 'SPECIAL_51_RESULT', availableDice: [d, d, d, d], backward: false, extraTurn: false, is51FourMove: true, message: `שחק דאבל ${d}` });
       }
     },
 
@@ -406,13 +496,25 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
       // ── Nesh Strike free moves ──────────────────────────────────────────────
       if (phase === 'SPECIAL_NESH_STRIKE_FREE_MOVE') {
+        // US-010: when 2 moves remain AND the player is on the Bar, the FIRST
+        // free move must originate from the bar checker and land in opponent's
+        // home (= bar entry). The SECOND free move is unrestricted.
+        const onBarFirstMove = state.neshStrikeFreeMovesLeft === 2 && hasBarPieces(board, sign);
+        const barIdx = sign === 1 ? 0 : 25;
+        const finalsFor = (idx: number): number[] => {
+          if (onBarFirstMove && idx !== barIdx) return [];
+          return getFreeMoveFinals(board, sign, onBarFirstMove);
+        };
+
         if (selectedIndex === null) {
+          if (onBarFirstMove && index !== barIdx) return;
           if (Math.sign(board[index]) === sign) {
-            set({ selectedIndex: index, finalHighlights: getFreeMoveFinals(board, sign), intermediateHighlights: [], moveLocked: false });
+            set({ selectedIndex: index, finalHighlights: finalsFor(index), intermediateHighlights: [], moveLocked: false });
           }
         } else if (finalHighlights.includes(index)) {
           const { board: nb, captured } = applyMove(board, selectedIndex, index, sign);
           const movesLeft = state.neshStrikeFreeMovesLeft - 1;
+          resetMoveCache();
           set({
             board: nb, selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
             moveLocked: false,
@@ -425,7 +527,8 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
             endTurnImpl();
           }
         } else if (Math.sign(board[index]) === sign) {
-          set({ selectedIndex: index, finalHighlights: getFreeMoveFinals(board, sign), intermediateHighlights: [], moveLocked: false });
+          if (onBarFirstMove && index !== barIdx) return;
+          set({ selectedIndex: index, finalHighlights: finalsFor(index), intermediateHighlights: [], moveLocked: false });
         }
         return;
       }
@@ -486,6 +589,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       // Bear-off clicks can come from board area — accept BEAR_OFF sentinels too
       const { board: nb, captured, borneOff } = applyMove(board, selectedIndex, index, sign);
       const newDice = getDiceAfterMove(availableDice, selectedIndex, index, sign, backward);
+      resetMoveCache();
 
       let newWBO = whiteBorneOff;
       let newBBO = blackBorneOff;
@@ -631,6 +735,18 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       }
       if (is(6, 5)) {
         const { board: nb, blotsCaptured } = applyNeshStrike(board, sign);
+        // US-010: if on Bar and opponent home is fully blocked, free moves
+        // cannot be played — turn is forfeited.
+        if (hasBarPieces(nb, sign) && getFreeMoveFinals(nb, sign, true).length === 0) {
+          set({
+            board: nb, dice: [d1, d2], doublesCount: 0,
+            phase: 'SKIP', availableDice: [],
+            neshStrikeFreeMovesLeft: 0,
+            selectedIndex: null, finalHighlights: [], intermediateHighlights: [],
+            message: '6:5 — בית היריב חסום, אין כניסה',
+          });
+          return;
+        }
         set({
           board: nb, dice: [d1, d2], doublesCount: 0,
           phase: 'SPECIAL_NESH_STRIKE_FREE_MOVE',
