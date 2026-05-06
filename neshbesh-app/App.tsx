@@ -847,10 +847,6 @@ export default function App() {
   }, [mpIsMultiplayer, mpRole, mpRoomId, mpScreen]);
 
   useEffect(() => {
-    // Audio system removed — game runs silent. This effect now only drives
-    // the visual side-effects that previously sat alongside SFX: the table
-    // flip animation trigger on phase change, and the eat-impact red flash
-    // on capture.
     if (phase === 'TABLE_FLIP' && prevPhaseRef.current !== 'TABLE_FLIP') {
       triggerFlip();
     }

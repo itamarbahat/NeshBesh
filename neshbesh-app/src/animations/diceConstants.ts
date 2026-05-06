@@ -1,7 +1,7 @@
 // ═════════════════════════════════════════════════════════════════════════════
 // DICE PHYSICS CONSTANTS — single source of truth for sizes, timings, and
-// landing-zone math used by ThrowingDiceOverlay, DicePanel, and the audio
-// shake/land/click pipeline. Tune here, never inline.
+// landing-zone math used by ThrowingDiceOverlay and DicePanel. Tune here,
+// never inline.
 // ═════════════════════════════════════════════════════════════════════════════
 
 import type { Rect } from '../components/boardConstants';
@@ -14,10 +14,9 @@ export const LANDING_POP_SCALE: number = 1.25;
 export const LANDING_POP_MS: number = 180;
 
 // Roll duration is randomized per throw so the dice never feel mechanical.
-// Both the flight animation and the shake SFX read the same value.
-// Capped at 3000 (US-009): physics tuning targets the 99th percentile
-// settle time at or below this value; the trajectory simulator hard-snaps
-// to the final pose if any die is still moving when this cap elapses.
+// Capped at 3000 ms: physics tuning targets the 99th-percentile settle time
+// at or below this value; the trajectory simulator hard-snaps to a legal
+// in-board rest pose if any die is still moving when this cap elapses.
 export const ROLL_DURATION_MIN_MS: number = 1000;
 export const ROLL_DURATION_MAX_MS: number = 3000;
 export const ROLL_HARD_CAP_MS: number = 3000;
@@ -36,9 +35,7 @@ export const PHYSICS_FRAME_DT_MS: number = 16;          // ~60 fps
 
 /**
  * Returns a uniformly random integer roll duration in
- * [ROLL_DURATION_MIN_MS, ROLL_DURATION_MAX_MS]. Pure: shares no state, so
- * each call is independent — `ThrowingDiceOverlay` is the single caller per
- * roll and threads the value to consumers (audio, animation).
+ * [ROLL_DURATION_MIN_MS, ROLL_DURATION_MAX_MS]. Pure: shares no state.
  */
 export function getRollDurationMs(): number {
   const span = ROLL_DURATION_MAX_MS - ROLL_DURATION_MIN_MS;
@@ -142,11 +139,11 @@ export interface FlightResult {
   /** Final at-rest pose for each die (last frame of each array). */
   finalA: DicePose;
   finalB: DicePose;
-  /** Frame indices at which the two dice collided (US-012). The renderer
-   *  uses these to schedule one-shot collision SFX during playback. */
+  /** Frame indices at which the two dice collided. Retained for the
+   *  in-board invariant harness; no runtime consumer today. */
   collisionFrames: number[];
-  /** Frame indices at which either die landed/bounced off a wall or a
-   *  forbidden rect — used by US-014 to stagger per-die land cues. */
+  /** Frame indices at which either die bounced off a wall or a forbidden
+   *  rect. Retained for the harness; no runtime consumer today. */
   bounceFramesA: number[];
   bounceFramesB: number[];
   /** Frame index at which each die first comes to rest (or
@@ -257,6 +254,13 @@ export function simulateDiceFlight(opts: {
   const totalFrames = Math.ceil(cap / dt) + 1;
   const a: RigidBody = { ...opts.startA };
   const b: RigidBody = { ...opts.startB };
+  // Defense-in-depth: a malformed call site that hands us an out-of-bounds
+  // start pose must not bleed into frame 0. Clamping here is cheap and
+  // keeps the in-board invariant a property of the simulator, not of every
+  // caller.
+  clampToWalls(a, opts.dieSize, opts.walls);
+  clampToWalls(b, opts.dieSize, opts.walls);
+
   const framesA: DicePose[] = new Array(totalFrames);
   const framesB: DicePose[] = new Array(totalFrames);
   const collisionFrames: number[] = [];
@@ -265,9 +269,8 @@ export function simulateDiceFlight(opts: {
   let settledFrame = -1;
   let restFrameA = -1;
   let restFrameB = -1;
-  // Throttle collision events so a contact lasting several frames does not
-  // produce a stream of ticks (US-012 acceptance: one event per discrete
-  // contact). 6 frames ≈ 96ms which matches the audio rate-limiter.
+  // Throttle so a contact lasting several frames does not produce a stream
+  // of recorded events. 6 frames ≈ 96 ms.
   let collisionCooldown = 0;
 
   for (let i = 0; i < totalFrames; i++) {
@@ -280,9 +283,14 @@ export function simulateDiceFlight(opts: {
     a.x += a.vx * dt; a.y += a.vy * dt; a.theta += a.omega * dt;
     b.x += b.vx * dt; b.y += b.vy * dt; b.theta += b.omega * dt;
 
-    // Constraints
-    if (clampToWalls(a, opts.dieSize, opts.walls)) bounceFramesA.push(i);
-    if (clampToWalls(b, opts.dieSize, opts.walls)) bounceFramesB.push(i);
+    // Constraints. Order matters: forbidden-rect resolution and die-die
+    // resolution can each push a die back across a wall they were just
+    // clamped to, so we MUST re-clamp to walls after them. Without the
+    // re-clamp, the next iteration's first action records the OOB pose
+    // into framesA[i+1] / framesB[i+1] and the renderer draws the die
+    // outside the play area.
+    let bouncedA = clampToWalls(a, opts.dieSize, opts.walls);
+    let bouncedB = clampToWalls(b, opts.dieSize, opts.walls);
     clampToForbiddenRects(a, opts.dieSize, opts.forbiddenRects);
     clampToForbiddenRects(b, opts.dieSize, opts.forbiddenRects);
     if (collisionCooldown > 0) collisionCooldown--;
@@ -292,6 +300,11 @@ export function simulateDiceFlight(opts: {
         collisionCooldown = 6;
       }
     }
+    // Final wall clamp — the in-board invariant guard.
+    bouncedA = clampToWalls(a, opts.dieSize, opts.walls) || bouncedA;
+    bouncedB = clampToWalls(b, opts.dieSize, opts.walls) || bouncedB;
+    if (bouncedA) bounceFramesA.push(i);
+    if (bouncedB) bounceFramesB.push(i);
 
     // Friction
     a.vx *= PHYSICS_FRICTION_PER_FRAME; a.vy *= PHYSICS_FRICTION_PER_FRAME;
@@ -299,7 +312,7 @@ export function simulateDiceFlight(opts: {
     a.omega *= PHYSICS_ANGULAR_FRICTION_PER_FRAME;
     b.omega *= PHYSICS_ANGULAR_FRICTION_PER_FRAME;
 
-    // Per-die rest detection feeds the staggered land trigger (US-014).
+    // Per-die rest detection.
     if (restFrameA < 0 && isAtRest(a)) {
       a.vx = a.vy = a.omega = 0;
       restFrameA = i;
@@ -313,8 +326,46 @@ export function simulateDiceFlight(opts: {
     }
   }
 
-  // The last entries of framesA/framesB are the settled poses (or final
-  // hard-snap pose if motion never converged within the cap).
+  // Hard-snap fallback: if the solver ran to the cap without both dice
+  // settling, the last raw integration coordinates are not a trustworthy
+  // rest pose. Snap to a `pickPairLandingPoints` result, which is
+  // guaranteed to live inside the play-area rect and respect occupancy
+  // rejection sampling, and overwrite the last several frames so the
+  // renderer's terminal visual pose is the snapped one.
+  if (settledFrame < 0) {
+    const boardW = opts.walls.right - opts.walls.left;
+    const boardH = opts.walls.bottom - opts.walls.top;
+    // Translate forbidden rects from world coords into walls-relative
+    // coords for pickPairLandingPoints, which assumes a (0,0)-origin
+    // play area.
+    const localRects: Rect[] = opts.forbiddenRects.map(r => ({
+      x: r.x - opts.walls.left,
+      y: r.y - opts.walls.top,
+      w: r.w,
+      h: r.h,
+    }));
+    const [snapA, snapB] = pickPairLandingPoints(boardW, boardH, opts.dieSize, localRects);
+    const snapPoseA: DicePose = {
+      x: snapA.x + opts.walls.left,
+      y: snapA.y + opts.walls.top,
+      theta: framesA[totalFrames - 1].theta,
+    };
+    const snapPoseB: DicePose = {
+      x: snapB.x + opts.walls.left,
+      y: snapB.y + opts.walls.top,
+      theta: framesB[totalFrames - 1].theta,
+    };
+    // Overwrite the tail of the trajectory with the snapped pose so the
+    // renderer cannot show a raw integrator coordinate at flight end.
+    // We touch only the last 4 frames (~64 ms) to keep the visual
+    // continuity with the earlier integrated motion.
+    const tailStart = Math.max(0, totalFrames - 4);
+    for (let i = tailStart; i < totalFrames; i++) {
+      framesA[i] = { ...snapPoseA };
+      framesB[i] = { ...snapPoseB };
+    }
+  }
+
   const finalA = framesA[totalFrames - 1];
   const finalB = framesB[totalFrames - 1];
   return {

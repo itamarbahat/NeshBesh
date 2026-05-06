@@ -26,7 +26,6 @@ The project also serves as a testing ground for **multi-agent AI-assisted develo
 | Language | TypeScript 5.9 |
 | State | Zustand 5 |
 | Animations | Reanimated 4 + Moti |
-| Audio | expo-av |
 | Icons | lucide-react-native |
 | Board Graphics | react-native-svg (cone triangles) |
 
@@ -254,7 +253,7 @@ Bar re-entry is enforced first: if a player has pieces on the bar, only bar-to-b
 - **Special roll cards:** Shown inline below the dice panel — no blocking modals for gameplay decisions (SKIP, 6:3, 4:5, result confirmations).
 - **Blocking overlays:** Only used for TABLE_FLIP animation and GAME_OVER results.
 - **Responsive layout:** Board width is capped by `Math.min(width - 8, (height - 280) / 1.25)` — tested for all iPhones (12 mini through 17) and iPads (5th gen through Pro M4 13").
-- **Sound effects:** Dice roll, piece move, piece capture, table flip (via expo-av).
+- **Audio:** none — the game runs in 100% silence.
 
 ---
 
@@ -286,12 +285,10 @@ NeshBesh/
     │   │   ├── SpecialRollOverlay.tsx # TABLE_FLIP + GAME_OVER modals
     │   │   ├── SingleDieRoller.tsx    # Single die roll component
     │   │   └── SpecialDiceGlow.tsx    # Glow effect for special rolls
-    │   ├── animations/
-    │   │   ├── useTableFlipAnimation.ts
-    │   │   ├── useDiceRollAnimation.ts
-    │   │   └── useEatAnimation.ts
-    │   └── audio/
-    │       └── useAudioManager.ts     # Sound effect hooks
+    │   └── animations/
+    │       ├── useTableFlipAnimation.ts
+    │       ├── useDiceRollAnimation.ts
+    │       └── useEatAnimation.ts
     └── assets/                        # Icons, splash, wood texture
 ```
 
@@ -307,7 +304,6 @@ NeshBesh/
 - 4-tier scoring system (Simple → Mars → Turkish Mars → Star Mars)
 - Match structure: best-of-3 sets, each set first-to-3 points
 - Swipe-to-roll dice with shrinking flight animation
-- Sound effects for dice, moves, captures, and table flips
 - Responsive portrait layout for all iPhones (12–17) and iPads (5th gen – Pro M4)
 - Landscape layout with player sidebars
 - Hebrew UI for special roll interactions

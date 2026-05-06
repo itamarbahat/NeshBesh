@@ -55,8 +55,7 @@ const DieFace: React.FC<{ value: number; size: number }> = ({ value, size }) => 
 // centre and land on empty board surface (collision-aware via occupancy
 // rejection sampling). Roll duration is randomized per throw on
 // [ROLL_DURATION_MIN_MS, ROLL_DURATION_MAX_MS] so each roll feels different.
-// On landing, dice pop up briefly (LANDING_POP_SCALE) before settling, and
-// the shake/land SFX layers mirror the same timing.
+// On landing, dice pop up briefly (LANDING_POP_SCALE) before settling.
 export const ThrowingDiceOverlay: React.FC<{
   velocity?: number;
   /** Die pixel size while in flight/landed. Derived from the board's
@@ -103,7 +102,6 @@ export const ThrowingDiceOverlay: React.FC<{
   ];
 
   const prevDiceRef = useRef(dice);
-  // Stored so audio (shake) can read the same value the flight uses.
   const lastRollDurationRef = useRef<number>(0);
 
   // When dice change → new throw animation
@@ -233,11 +231,10 @@ export const ThrowingDiceOverlay: React.FC<{
       hardCapMs: ROLL_HARD_CAP_MS,
     });
 
-    // Visual playback duration: bounded by ROLL_HARD_CAP_MS (US-009) but
-    // randomized within [ROLL_DURATION_MIN_MS, ROLL_HARD_CAP_MS] so each
-    // roll feels a little different. The simulation runs to
-    // sim.simDurationMs and freezes; we play that real duration so motion
-    // matches what the audio and tumble loop expect.
+    // Visual playback duration: bounded by ROLL_HARD_CAP_MS but randomized
+    // within [ROLL_DURATION_MIN_MS, ROLL_HARD_CAP_MS] so each roll feels a
+    // little different. The simulation runs to sim.simDurationMs and freezes;
+    // we play that real duration so motion matches the tumble loop.
     const flightMs = Math.min(sim.simDurationMs || getRollDurationMs(), ROLL_HARD_CAP_MS);
     lastRollDurationRef.current = flightMs;
 
@@ -258,10 +255,6 @@ export const ThrowingDiceOverlay: React.FC<{
     const t0 = Date.now();
     const totalFrames = sim.framesA.length;
     const frameDt = PHYSICS_FRAME_DT_MS;
-
-    // Audio system removed — no collision / per-die land cues here. The
-    // simulator still records `collisionFrames` / `restFrameA` /
-    // `restFrameB`, available if a future visual cue needs them.
 
     const tick = () => {
       const elapsed = Date.now() - t0;
@@ -312,7 +305,7 @@ export const ThrowingDiceOverlay: React.FC<{
     setTumbleFaces(values);
     setLandedDice(values);
     setAnimating(false);
-    // Landing: brief scale pop on each die. Audio layer removed.
+    // Brief scale pop on each die at landing.
     const popUpMs = 80;
     const popDownMs = Math.max(40, LANDING_POP_MS - popUpMs);
     diceScales.forEach(s => {

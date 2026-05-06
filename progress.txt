@@ -2,7 +2,87 @@
 
 ## Learnings
 
-### PRD-multiplayer.md — implementation notes (2026-05-04)
+### US-007 — physics fix applied (2026-05-05)
+
+**Patch:** `simulateDiceFlight` in
+`neshbesh-app/src/animations/diceConstants.ts`:
+
+1. Added an entry-time `clampToWalls` for both bodies so frame 0 is
+   provably in-bounds even if a caller passes a malformed start pose.
+2. Reordered per-tick constraints: `clampToWalls → clampToForbiddenRects
+   → resolveDieDie → clampToWalls` (a final wall clamp now follows every
+   position-correcting step). Bounce-frame indices are recorded from the
+   union of pre- and post-clamp wall hits.
+3. Cap-time hard-snap: when `settledFrame < 0`, the last 4 frames
+   (~64 ms) of `framesA` / `framesB` are overwritten with a
+   `pickPairLandingPoints` result translated into wall coordinates.
+   This guarantees the renderer's terminal visual pose is a legal
+   in-board rest pose, not a raw integrator coordinate.
+
+**Verification (pending — requires user shell with npm/node):**
+- `npx tsc --noEmit` from `neshbesh-app/` — expect zero errors.
+- `npm run dice:check` — expect "✅ all dice centers stayed inside
+  the play-area rect" across 100 rolls. Re-run with
+  `DICE_HARNESS_N=1000 DICE_HARNESS_SEED=42 npm run dice:check` for
+  the extended run.
+- Manual on-device repro from the US-005 diagnosis should no longer
+  reproduce the bug.
+
+### US-005 — dice-out-of-board diagnosis (2026-05-05)
+
+**Repro:** local hotseat, any board state, repeated rolls. Eventually a die's
+center is rendered outside the play-area rect (most often near the left/right
+edges, sometimes wedged under a corner). Visual: the die clips past the wood
+frame.
+
+**Hot path:** `simulateDiceFlight` in
+`neshbesh-app/src/animations/diceConstants.ts` (lines 269–310 of pre-fix
+file). Per-tick order is:
+
+1. Record `framesA[i] = { x: a.x, y: a.y, ... }`
+2. Integrate (`a.x += a.vx * dt`)
+3. `clampToWalls(a, ...)`           ← die forced inside walls
+4. `clampToForbiddenRects(a, ...)`  ← may push die ACROSS a wall
+5. `resolveDieDie(a, b, ...)`       ← may push either die ACROSS a wall
+6. Friction / rest detection
+
+**The bug:** steps 4 and 5 do position corrections without a follow-up wall
+clamp. Specifically, `resolveDieDie` does `a.x -= (nx * overlap) / 2` to
+separate the dice along the contact normal — when one die is already against
+a wall (post-step-3), the separation pushes it into / past the wall. Same
+mechanism for `clampToForbiddenRects` if the shallowest-axis push happens to
+be toward an adjacent wall.
+
+The OOB position is then recorded into `framesA[i+1]` at the top of the
+next iteration BEFORE any clamp runs. The renderer in
+`ThrowingDiceOverlay.tsx` consumes `framesA[frameIdx]` directly per-tick,
+so the OOB frame becomes visible.
+
+A second contributing factor: when the 3-second cap fires with a die still
+in motion, `finalA = framesA[totalFrames - 1]` returns the last raw
+integration result. This is supposed to be the hard-snap pose but
+`pickLandingPoint` / `pickPairLandingPoints` are never consulted on the
+runtime path.
+
+**Origin:** the order-of-constraints bug has been latent since the physics
+simulator landed in commit `11f108e` (2026-05-XX, "Implement PRD: perf,
+static board, dice physics, audio"). The audio-removal commits (`0ca0958`,
+`81d55ba`) did not introduce it — they merely did not surface it because
+the previous test focus was on the audio scheduling cursors that lived
+alongside the integrator.
+
+**Proposed fix (US-007):**
+1. Re-clamp both dice to walls AFTER `clampToForbiddenRects` and
+   `resolveDieDie` so no OOB position can survive a single tick.
+2. Record bounce-frame indices from the union of pre- and post-clamp wall
+   hits so the harness still sees them.
+3. Replace the cap-time `finalA` / `finalB` fallback with a
+   `pickPairLandingPoints` result so a non-converged solver never bleeds
+   raw integrator coordinates to the renderer.
+4. Defense-in-depth: clamp `startA` / `startB` to walls at simulator
+   entry so frame 0 is provably in-bounds even for bad call-site math.
+
+### Multiplayer (historical — folded into PRD.md) — implementation notes (2026-05-04)
 - `expo-linking` added to `package.json` at `~8.0.8` (Expo SDK 54). User must run
   `npm install` from `neshbesh-app/` before the dev server starts.
 - Deep link parsing lives in `App.tsx` (cold + warm start), not `LobbyScreen.tsx`,
@@ -42,7 +122,7 @@
 - [ ] Manual code entry joins the same room
 - [ ] QR scan still works from the `More join options` disclosure
 
-### Dice Polish (covers PRD-dice-polish.md)
+### Dice Polish (historical — folded into PRD.md)
 - [ ] Dice never overlap a checker column at rest (test on a board with stacked points)
 - [ ] Roll duration varies visibly between rolls (sometimes <1.5s, sometimes >3s)
 - [ ] Tray dice are noticeably larger than landed dice
@@ -136,7 +216,7 @@
 - **Typecheck status** — NOT verified locally (`node`/`npm`/`tsc` not on
   PATH). User should run `npx tsc --noEmit` from `neshbesh-app/` to verify.
 
-### PRD-dice-polish.md — implementation notes (2026-05-05)
+### Dice Polish (historical — folded into PRD.md) — implementation notes (2026-05-05)
 - New module `src/animations/diceConstants.ts` owns all dice timing/scale
   magic numbers (`TRAY_DIE_SCALE=1.6`, `BOARD_DIE_SCALE=1.0`,
   `LANDING_POP_SCALE=1.25`, `LANDING_POP_MS=180`, `ROLL_DURATION_MIN_MS=1000`,
@@ -178,7 +258,7 @@
 
 ## PRD.md — UI Performance, Dice Physics, Audio & Static Board (2026-05-05)
 
-> Active PRD. Prior engine/rules PRD archived as `PRD-engine-rules.md`.
+> Historical — superseded by the consolidated PRD.md (2026-05-05).
 > Release window: 2026-06-10.
 
 ### Open questions resolved during clarification
@@ -220,7 +300,7 @@
     so the component only re-renders on board-relevant slices.
 - **US-003 — narrow subscriptions.** `ThrowingDiceOverlay`,
   `OpponentHeaderChip`, and `RemoteBottomBar` were already on narrowed
-  selectors (the original PRD-engine-rules progress note was stale).
+  selectors (the original engine-rules progress note was stale).
   Verified each component's selector list matches the fields it
   actually renders:
   - `ThrowingDiceOverlay`: `dice`, `phase`, `board`, `currentPlayer`
@@ -317,7 +397,8 @@
     `playDieLand(idx)`, `playDieCollision()`, `playBearOff()`.
   - Each method uses the existing `playSound` no-op-on-null path so a
     missing asset silently does nothing — matches the
-    `playRollDice` / `playMovePiece` pattern from PRD-dice-polish.
+    `playRollDice` / `playMovePiece` pattern (historical — audio system
+    has since been removed entirely, see PRD.md "Total Silence").
   - Module-scope `collisionEarliestMs` rate-limits collision SFX to
     one trigger per `COLLISION_MIN_GAP_MS` (90 ms). The simulator also
     has a 6-frame cooldown so the audio limiter is the second line of
@@ -446,19 +527,19 @@ Static-Board Audit (US-006)" below — every Δ row must be 0 px.
 - [ ] During a single throw with a visible mid-flight collision — hear
   the soft tick (rate-limited to one per discrete contact)
 
-**No-regression checks (prior PRDs).**
-- PRD-multiplayer (rows from existing Manual Test Plan):
+**No-regression checks (frozen invariants — see PRD.md §6).**
+- Multiplayer (PRD.md §6.2):
   - [ ] Local hotseat byte-equivalence: top `PlayerDiceBar` rotated
     180° (unchanged), bottom unrotated (unchanged), special-roll cards
     mirror toward the active player (unchanged)
   - [ ] Remote two-device flow still routes guest actions through host
-- PRD-engine-rules:
+- Engine rules (PRD.md §6.1):
   - [ ] 1:2 → SKIP unchanged
   - [ ] 4:5 → DoubleChooser unchanged
   - [ ] 5:1 four-move + bar entry unchanged
   - [ ] 6:5 Nesh Strike + bar restriction unchanged
   - [ ] Bear-off "must advance higher" unchanged
-- PRD-dice-polish:
+- Dice landing & layout (PRD.md §6.3):
   - [ ] Tray dice are larger than landed dice (TRAY_DIE_SCALE 1.6×)
   - [ ] Landing pop visible on each die
 
