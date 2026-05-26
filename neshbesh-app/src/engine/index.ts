@@ -248,19 +248,47 @@ export const getDiceAfterMove = (
 ): number[] => {
   const dir = (sign === 1 ? 1 : -1) * (backward ? -1 : 1);
 
-  // Bear-off: consume minimum exact die, or smallest die >= needed
   if (to === BEAR_OFF_WHITE || to === BEAR_OFF_BLACK) {
     const needed = sign === 1 ? 25 - from : from;
+
+    // 1) Exact single-die match
     const exact = dice.findIndex(d => d === needed);
     if (exact !== -1) {
       const r = [...dice]; r.splice(exact, 1); return r;
     }
+
+    // 2) Single-die overshoot (smallest die >= needed)
     const eligible = dice
       .map((d, i) => ({ d, i }))
       .filter(({ d }) => d >= needed)
       .sort((a, b) => a.d - b.d);
     if (eligible.length) {
       const r = [...dice]; r.splice(eligible[0].i, 1); return r;
+    }
+
+    // 3) Doubles: consume k = ceil(needed / d) dice when k <= dice.length
+    if (dice.length > 1 && dice.every(d => d === dice[0])) {
+      const d = dice[0];
+      const k = Math.ceil(needed / d);
+      if (k <= dice.length) return dice.slice(k);
+    }
+
+    // 4) Two-die sum (non-double): consume both if their sum >= needed
+    if (dice.length >= 2) {
+      for (let i = 0; i < dice.length - 1; i++) {
+        for (let j = i + 1; j < dice.length; j++) {
+          if (dice[i] + dice[j] >= needed) {
+            const r = [...dice]; r.splice(j, 1); r.splice(i, 1); return r;
+          }
+        }
+      }
+    }
+
+    // 5) Defensive: never silently grant a free bear-off. Consume the largest die.
+    if (dice.length > 0) {
+      let maxIdx = 0;
+      for (let i = 1; i < dice.length; i++) if (dice[i] > dice[maxIdx]) maxIdx = i;
+      const r = [...dice]; r.splice(maxIdx, 1); return r;
     }
     return dice;
   }
@@ -349,11 +377,13 @@ export const getFreeMoveFinals = (
   board: number[],
   sign: PlayerSign,
   opponentHomeOnly = false,
+  source: number | null = null,
 ): number[] => {
   const valid: number[] = [];
   const start = opponentHomeOnly ? (sign === 1 ? 1 : 19) : 1;
   const end = opponentHomeOnly ? (sign === 1 ? 6 : 24) : 24;
   for (let i = start; i <= end; i++) {
+    if (i === source) continue;
     if (isLandable(board, i, sign)) valid.push(i);
   }
   return valid;

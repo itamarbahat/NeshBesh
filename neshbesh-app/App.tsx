@@ -108,12 +108,20 @@ const SpecialRollCard: React.FC<{
     phase, message, currentPlayer,
     acknowledgeSkip, choose63, chooseDouble, confirmSpecialResult,
   } = useGameStore();
+  const backward = useGameStore((s) => s.backward);
   const gameMode = useMultiplayerStore((s) => s.gameMode);
 
   const ack = onAcknowledgeSkip || acknowledgeSkip;
   const ch63 = onChoose63 || choose63;
   const chDbl = onChooseDouble || chooseDouble;
   const cfm = onConfirmSpecial || confirmSpecialResult;
+
+  // 5:2 backward-notice acknowledgement. Reset whenever we leave MOVING or
+  // backward turns off so the next 5:2 turn shows the card again.
+  const [ack52, setAck52] = useState(false);
+  useEffect(() => {
+    if (phase !== 'MOVING' || !backward) setAck52(false);
+  }, [phase, backward]);
 
   // In remote two-device mode, every player reads the screen the same way →
   // anchor to the bottom and never rotate. Local hotseat keeps the original
@@ -161,6 +169,28 @@ const SpecialRollCard: React.FC<{
           <View style={styles.specialCardRow}>
             <Text style={styles.specialCardTitle}>{message}</Text>
             <TouchableOpacity style={styles.specialCardBtn} onPress={cfm} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Text style={styles.specialCardBtnText}>יאללה!</Text></TouchableOpacity>
+          </View>
+        </MotiView>
+      </View>
+    );
+  }
+
+  // 5:2 backward notice. Narrow gate via message prefix so bar-entry variants
+  // ('5:2 מהבר...') — which mix forward entry + backward play — don't show
+  // a misleading "go backwards" card.
+  if (
+    phase === 'MOVING' &&
+    backward === true &&
+    !!message &&
+    message.startsWith('5:2 —') &&
+    !ack52
+  ) {
+    return (
+      <View style={[styles.specialCardWrapper, mirroredStyle]}>
+        <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.specialCard}>
+          <View style={styles.specialCardRow}>
+            <Text style={styles.specialCardTitle}>5:2 — לכו אחורה!</Text>
+            <TouchableOpacity style={styles.specialCardBtn} onPress={() => setAck52(true)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Text style={styles.specialCardBtnText}>הבנתי</Text></TouchableOpacity>
           </View>
         </MotiView>
       </View>

@@ -17,7 +17,7 @@ import { MotiView } from 'moti';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import QRCode from 'react-native-qrcode-svg';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
-import { getShareUrl } from '../services/multiplayerService';
+import { getShareUrl, getShareMessage } from '../services/multiplayerService';
 import { isFirebaseConfigured } from '../config/firebase';
 
 const QR_PREFIX = 'NESHBESH:';
@@ -125,7 +125,7 @@ export const LobbyScreen: React.FC = () => {
     const url = getShareUrl(roomId);
     try {
       await Share.share({
-        message: `הצטרף למשחק NeshBesh שלי: ${url}\n\nאו הזן קוד חדר: ${roomId}`,
+        message: getShareMessage(roomId),
         url, // iOS-only; Android ignores and uses message
       });
     } catch {

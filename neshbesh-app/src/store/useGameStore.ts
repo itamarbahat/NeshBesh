@@ -524,14 +524,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         const mustSelectBar = startedOnBar && isFirstMove;
         const barIdx = sign === 1 ? 0 : 25;
         const targetRestricted = startedOnBar; // both moves restricted when started on bar
-        const finalsFromSource = (): number[] => getFreeMoveFinals(board, sign, targetRestricted);
+        const finalsFromSource = (src: number): number[] => getFreeMoveFinals(board, sign, targetRestricted, src);
 
         if (selectedIndex === null) {
           if (mustSelectBar && index !== barIdx) return;
           if (Math.sign(board[index]) === sign) {
-            set({ selectedIndex: index, finalHighlights: finalsFromSource(), intermediateHighlights: [], moveLocked: false });
+            set({ selectedIndex: index, finalHighlights: finalsFromSource(index), intermediateHighlights: [], moveLocked: false });
           }
-        } else if (finalHighlights.includes(index)) {
+        } else if (finalHighlights.includes(index) && index !== selectedIndex) {
           const { board: nb, captured } = applyMove(board, selectedIndex, index, sign);
           const movesLeft = state.neshStrikeFreeMovesLeft - 1;
           resetMoveCache();
@@ -548,7 +548,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           }
         } else if (Math.sign(board[index]) === sign) {
           if (mustSelectBar && index !== barIdx) return;
-          set({ selectedIndex: index, finalHighlights: finalsFromSource(), intermediateHighlights: [], moveLocked: false });
+          set({ selectedIndex: index, finalHighlights: finalsFromSource(index), intermediateHighlights: [], moveLocked: false });
         }
         return;
       }

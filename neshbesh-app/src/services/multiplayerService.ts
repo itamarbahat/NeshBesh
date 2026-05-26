@@ -31,6 +31,14 @@ export const getShareUrl = (roomId: string): string => {
   return `${SHARE_URL_BASE}/${roomId}`;
 };
 
+// ── Build a WhatsApp/Share-friendly message ────────────────────────────────
+// URL lives on its own line so link detectors in WhatsApp/Telegram/SMS
+// pick it up cleanly instead of choking on adjacent punctuation.
+export const getShareMessage = (roomId: string): string => {
+  const url = getShareUrl(roomId);
+  return `הצטרף אליי למשחק NeshBesh!\n\nקוד החדר: ${roomId}\n\n${url}`;
+};
+
 // ── Generate short room code ────────────────────────────────────────────────
 export const generateRoomCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
