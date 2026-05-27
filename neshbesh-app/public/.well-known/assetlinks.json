@@ -4,7 +4,7 @@
     "target": {
       "namespace": "android_app",
       "package_name": "com.neshbesh.app",
-      "sha256_cert_fingerprints": ["REPLACE_WITH_SHA256_FINGERPRINT"]
+      "sha256_cert_fingerprints": ["47:AE:CF:B1:41:57:6E:91:CE:4A:C6:99:4B:58:D3:CF:E7:7D:6C:EB:9C:3A:DD:92:48:2D:3C:E8:A5:D1:8B:08"]
     }
   }
 ]

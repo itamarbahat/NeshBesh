@@ -16,7 +16,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.neshbesh.app",
-      "associatedDomains": ["applinks:neshbesh.app"]
+      "associatedDomains": [
+        "applinks:neshbesh.app"
+      ]
     },
     "android": {
       "package": "com.neshbesh.app",
@@ -31,15 +33,30 @@
           "action": "VIEW",
           "autoVerify": true,
           "data": [
-            { "scheme": "https", "host": "neshbesh.app", "pathPrefix": "/join" },
-            { "scheme": "neshbesh", "host": "join" }
+            {
+              "scheme": "https",
+              "host": "neshbesh.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "neshbesh",
+              "host": "join"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "392a8561-bdcf-49ec-9a70-cd89b75fcec5"
+      }
     }
   }
 }
