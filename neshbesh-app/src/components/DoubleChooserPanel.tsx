@@ -5,6 +5,7 @@ import {
   Dice1, Dice2, Dice3, Dice4, Dice5, Dice6,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
+import { useGameStore, getChoosableDoubleValues } from '../store/useGameStore';
 
 const DICE_ICONS: Record<number, React.FC<LucideProps>> = {
   1: Dice1, 2: Dice2, 3: Dice3, 4: Dice4, 5: Dice5, 6: Dice6,
@@ -17,9 +18,18 @@ interface DoubleChooserPanelProps {
 /**
  * Inline panel displayed BELOW the board when a 4:5 is rolled.
  * Shows 6 large dice side-by-side; the player taps one to choose that double.
+ *
+ * Per PRD §3.2 (R1/R2): only doubles that can be FULLY completed from the
+ * current board are enabled. If no double is fully completable, all 6 remain
+ * enabled (fallback). Disabled buttons are visually subdued and non-pickable.
  */
 export const DoubleChooserPanel: React.FC<DoubleChooserPanelProps> = ({ onChoose }) => {
   const [hoveredValue, setHoveredValue] = useState<number | null>(null);
+
+  // Narrowed selectors — only re-render when board or active player changes.
+  const board = useGameStore((s) => s.board);
+  const currentPlayer = useGameStore((s) => s.currentPlayer);
+  const choosable = getChoosableDoubleValues({ board, currentPlayer });
 
   return (
     <MotiView
@@ -39,7 +49,8 @@ export const DoubleChooserPanel: React.FC<DoubleChooserPanelProps> = ({ onChoose
       <View style={styles.diceRow}>
         {[1, 2, 3, 4, 5, 6].map((value) => {
           const Icon = DICE_ICONS[value];
-          const isHovered = hoveredValue === value;
+          const isEnabled = choosable.includes(value);
+          const isHovered = isEnabled && hoveredValue === value;
 
           return (
             <MotiView
@@ -49,14 +60,28 @@ export const DoubleChooserPanel: React.FC<DoubleChooserPanelProps> = ({ onChoose
               transition={{ type: 'spring', damping: 14, delay: value * 60 }}
             >
               <TouchableOpacity
-                style={[styles.dieButton, isHovered && styles.dieButtonActive]}
-                onPress={() => onChoose(value)}
-                onPressIn={() => setHoveredValue(value)}
-                onPressOut={() => setHoveredValue(null)}
-                activeOpacity={0.7}
+                style={[
+                  styles.dieButton,
+                  isHovered && styles.dieButtonActive,
+                  !isEnabled && styles.dieButtonDisabled,
+                ]}
+                onPress={isEnabled ? () => onChoose(value) : undefined}
+                onPressIn={isEnabled ? () => setHoveredValue(value) : undefined}
+                onPressOut={isEnabled ? () => setHoveredValue(null) : undefined}
+                disabled={!isEnabled}
+                activeOpacity={isEnabled ? 0.7 : 1}
               >
-                <Icon size={38} color={isHovered ? '#FFD700' : '#FFF'} />
-                <Text style={[styles.dieLabel, isHovered && styles.dieLabelActive]}>
+                <Icon
+                  size={38}
+                  color={!isEnabled ? '#7A7166' : isHovered ? '#FFD700' : '#FFF'}
+                />
+                <Text
+                  style={[
+                    styles.dieLabel,
+                    isHovered && styles.dieLabelActive,
+                    !isEnabled && styles.dieLabelDisabled,
+                  ]}
+                >
                   {value}:{value}
                 </Text>
               </TouchableOpacity>
@@ -129,6 +154,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 215, 0, 0.15)',
     borderColor: '#FFD700',
   },
+  dieButtonDisabled: {
+    backgroundColor: 'rgba(50, 40, 32, 0.55)',
+    borderColor: 'rgba(110, 95, 80, 0.35)',
+    opacity: 0.3,
+  },
   dieLabel: {
     color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 11,
@@ -136,5 +166,8 @@ const styles = StyleSheet.create({
   },
   dieLabelActive: {
     color: '#FFD700',
+  },
+  dieLabelDisabled: {
+    color: '#6E5F50',
   },
 });

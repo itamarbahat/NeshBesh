@@ -98,10 +98,10 @@ export const SingleDieRoller: React.FC<SingleDieRollerProps> = ({ mode, onRoll }
   const Icon = DICE_ICONS[displayFace] || Dice1;
 
   const isBackward = mode === 'SPECIAL_43_ROLL';
-  const titleText = isBackward ? '4:3 — Backward Move' : '5:1 — Lucky Double';
+  const titleText = isBackward ? 'גלגול אחורה (4:3)' : 'דאבל מזל (5:1)';
   const descText = isBackward
-    ? 'Tap the die — the result determines how many steps you move backwards'
-    : 'Tap the die — the result determines which double you play';
+    ? 'הטל את הקובייה — התוצאה קובעת כמה צעדים אחורה'
+    : 'הטל את הקובייה — התוצאה קובעת איזה דאבל תשחק';
 
   return (
     <View style={styles.overlay} pointerEvents="box-none">
@@ -140,12 +140,12 @@ export const SingleDieRoller: React.FC<SingleDieRollerProps> = ({ mode, onRoll }
 
         {!rolling && (
           <Animated.View style={[styles.tapHint, { opacity: pulseAnim.interpolate({ inputRange: [1, 1.12], outputRange: [0.5, 1] }) }]}>
-            <Text style={styles.tapHintText}>TAP TO ROLL</Text>
+            <Text style={styles.tapHintText}>הקש להטלה</Text>
           </Animated.View>
         )}
 
         {rolling && (
-          <Text style={styles.rollingText}>Rolling...</Text>
+          <Text style={styles.rollingText}>מטיל...</Text>
         )}
       </View>
     </View>
@@ -183,6 +183,8 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 15,
     fontWeight: '800',
+    writingDirection: 'rtl',
+    textAlign: 'right',
   },
   labelDesc: {
     color: 'rgba(255, 255, 255, 0.55)',
@@ -190,6 +192,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 2,
     maxWidth: 220,
+    writingDirection: 'rtl',
+    textAlign: 'right',
   },
   dieTouchable: {
     padding: 8,
@@ -231,7 +235,8 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 2,
+    letterSpacing: 0.5,
+    writingDirection: 'rtl',
   },
   rollingText: {
     color: '#FFA040',

@@ -8,6 +8,7 @@ import {
 import { Slot, BarSlot } from './Slot';
 import { BEAR_OFF_WHITE, BEAR_OFF_BLACK } from '../engine';
 import { BOARD_FROZEN, BOARD_ASPECT } from './boardConstants';
+import { DoublesCounterChip } from './DoublesCounterChip';
 
 // Re-export for components that import these from Board.tsx.
 export { BOARD_FROZEN, BOARD_ASPECT };
@@ -109,23 +110,29 @@ export const Board: React.FC<BoardProps> = ({
           PlayerDiceBar provides per-player bear-off buttons instead. */}
       {showBearOffRow && (
         <View style={styles.bearOffRow}>
-          <TouchableOpacity
-            style={[styles.bearOffTray, bearOffWhiteActive && styles.bearOffActive]}
-            onPress={() => bearOffWhiteActive && onPointPress(BEAR_OFF_WHITE)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.bearOffLabel}>WHITE OFF</Text>
-            <Text style={styles.bearOffCount}>{whiteBorneOff}</Text>
-          </TouchableOpacity>
+          <View style={styles.bearOffSide}>
+            <TouchableOpacity
+              style={[styles.bearOffTray, bearOffWhiteActive && styles.bearOffActive]}
+              onPress={() => bearOffWhiteActive && onPointPress(BEAR_OFF_WHITE)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.bearOffLabel}>WHITE OFF</Text>
+              <Text style={styles.bearOffCount}>{whiteBorneOff}</Text>
+            </TouchableOpacity>
+            <DoublesCounterChip side={1} />
+          </View>
           <View style={{ flex: 1 }} />
-          <TouchableOpacity
-            style={[styles.bearOffTray, bearOffBlackActive && styles.bearOffActive]}
-            onPress={() => bearOffBlackActive && onPointPress(BEAR_OFF_BLACK)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.bearOffLabel}>BLACK OFF</Text>
-            <Text style={styles.bearOffCount}>{blackBorneOff}</Text>
-          </TouchableOpacity>
+          <View style={styles.bearOffSide}>
+            <DoublesCounterChip side={-1} />
+            <TouchableOpacity
+              style={[styles.bearOffTray, bearOffBlackActive && styles.bearOffActive]}
+              onPress={() => bearOffBlackActive && onPointPress(BEAR_OFF_BLACK)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.bearOffLabel}>BLACK OFF</Text>
+              <Text style={styles.bearOffCount}>{blackBorneOff}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -215,6 +222,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: 6,
     paddingHorizontal: 4,
+    alignItems: 'center',
+  },
+  bearOffSide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   bearOffTray: {
     backgroundColor: BOARD_FROZEN.TRAY_BG,

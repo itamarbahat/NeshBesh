@@ -413,6 +413,63 @@ export const hasAnyMove = (
   return false;
 };
 
+// 4:5 Choose-Double legality gate (PRD §4.2, R1/R2).
+// Returns true iff all 4 pips of value `value` could be played legally from the
+// current board, exhausting bar entries first, then any legal forward play
+// (board moves + bear-offs). Deterministic — no randomness, no caching.
+export const canFullyCompleteDouble = (
+  board: number[],
+  sign: PlayerSign,
+  value: number,
+): boolean => {
+  if (value < 1 || value > 6) return false;
+
+  let simBoard = [...board];
+  // Use 4 identical pips; each loop consumes exactly one.
+  let pipsLeft = 4;
+
+  while (pipsLeft > 0) {
+    const barIdx = sign === 1 ? 0 : 25;
+    const onBar = Math.abs(simBoard[barIdx]) > 0;
+
+    if (onBar) {
+      // Bar-entry attempt for the rolled value. All four pips are identical,
+      // so if entry is blocked for one, it's blocked for all remaining.
+      const target = sign === 1 ? value : 25 - value;
+      if (target < 1 || target > 24) return false;
+      const occ = simBoard[target];
+      if (Math.sign(occ) === -sign && Math.abs(occ) >= 2) return false;
+      const r = applyMove(simBoard, barIdx, target, sign);
+      simBoard = r.board;
+      pipsLeft -= 1;
+      continue;
+    }
+
+    // No bar piece — find ANY legal forward move of pip value `value`.
+    // Use calculatePossibleMoves on each of the player's slots with a single
+    // die [value] (no path-stacking ambiguity since one pip is consumed at a
+    // time here). bearOff is allowed when the player can bear off.
+    const bo = canBearOff(simBoard, sign);
+    let made = false;
+    for (let i = 1; i <= 24; i++) {
+      if (Math.sign(simBoard[i]) !== sign) continue;
+      const { final } = calculatePossibleMoves(simBoard, i, sign, [value], false, bo);
+      if (final.length === 0) continue;
+      // Prefer the first available destination — any legal move suffices for
+      // the "can fully complete" question.
+      const dest = final[0];
+      const r = applyMove(simBoard, i, dest, sign);
+      simBoard = r.board;
+      made = true;
+      break;
+    }
+    if (!made) return false;
+    pipsLeft -= 1;
+  }
+
+  return true;
+};
+
 export const calculateVictory = (
   board: number[],
   winnerSign: PlayerSign,

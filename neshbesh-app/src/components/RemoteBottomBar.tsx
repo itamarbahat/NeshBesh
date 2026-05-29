@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MotiView } from 'moti';
 import { useGameStore, currentPlayerHasLegalMoves } from '../store/useGameStore';
 import { DicePanel } from './DicePanel';
+import { DoublesCounterChip } from './DoublesCounterChip';
 
 // Bottom-anchored, never-mirrored controls for remote two-device play.
 // Always shows the LOCAL player's dice + status + (conditional) End Turn.
@@ -60,7 +61,10 @@ export const RemoteBottomBar: React.FC<Props> = ({
         <Text style={styles.status} numberOfLines={1}>
           {isMyTurn ? getStatusText() : 'תור היריב…'}
         </Text>
-        <Text style={styles.borne}>Off: {myBorne}/15</Text>
+        <View style={styles.borneRow}>
+          <Text style={styles.borne}>Off: {myBorne}/15</Text>
+          <DoublesCounterChip side={mySign} compact />
+        </View>
       </View>
 
       <View style={styles.center}>
@@ -120,7 +124,8 @@ const styles = StyleSheet.create({
   left: { width: 76, alignItems: 'flex-start' },
   label: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
   status: { color: 'rgba(255,255,255,0.5)', fontSize: 9, fontStyle: 'italic', marginTop: 2 },
-  borne: { color: '#FFD700', fontSize: 9, fontWeight: '800', marginTop: 3, letterSpacing: 0.5 },
+  borne: { color: '#FFD700', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  borneRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 70 },
   right: { width: 76, alignItems: 'flex-end', gap: 4 },
   idle: { opacity: 0.4, paddingVertical: 20 },

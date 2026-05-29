@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { MotiView } from 'moti';
 import { useGameStore } from '../store/useGameStore';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
+import { DoublesCounterChip } from './DoublesCounterChip';
 
 // Compact, never-mirrored header strip showing the REMOTE opponent's name,
 // bear-off count, and an activity indicator — but never their dice values.
@@ -41,6 +42,7 @@ export const OpponentHeaderChip: React.FC<Props> = ({ mySign }) => {
           {opponentName || 'יריב'}
         </Text>
         <Text style={styles.borne}>Off: {opponentBorne}/15</Text>
+        <DoublesCounterChip side={opponentSign} compact />
       </View>
       {activityText && (
         <MotiView

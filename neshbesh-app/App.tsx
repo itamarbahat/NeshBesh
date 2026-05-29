@@ -31,6 +31,8 @@ import { SpecialRollOverlay } from './src/components/SpecialRollOverlay';
 import { ThrowingDiceOverlay } from './src/components/ThrowingDiceOverlay';
 import { RemoteBottomBar } from './src/components/RemoteBottomBar';
 import { OpponentHeaderChip } from './src/components/OpponentHeaderChip';
+import { DoublesCounterChip } from './src/components/DoublesCounterChip';
+import { MessageBanner } from './src/components/MessageBanner';
 import { useTableFlipAnimation } from './src/animations';
 import { PlayerSign } from './src/types';
 
@@ -313,6 +315,9 @@ const PlayerSidebar: React.FC<{
             <BorneBadge count={borneCount} isWhite={isWhite} />
             <Text style={styles.borneCountLabel}>Off: {borneCount}/15</Text>
           </View>
+          <View style={styles.sidebarDoublesRow}>
+            <DoublesCounterChip side={playerSign === 1 ? 1 : -1} compact />
+          </View>
         </View>
       </View>
     </View>
@@ -473,9 +478,12 @@ const PlayerDiceBar: React.FC<{
         <Text style={styles.playerBarStatus} numberOfLines={1}>
           {isMyTurn ? getStatusText() : 'Waiting…'}
         </Text>
-        <Text style={styles.playerBarBorneMini}>
-          Off: {(mySide === 1 ? whiteBorneOff : blackBorneOff)}/15
-        </Text>
+        <View style={styles.playerBarBorneRow}>
+          <Text style={styles.playerBarBorneMini}>
+            Off: {(mySide === 1 ? whiteBorneOff : blackBorneOff)}/15
+          </Text>
+          <DoublesCounterChip side={mySide} compact />
+        </View>
       </View>
 
       <View style={styles.playerBarCenter}>
@@ -987,9 +995,6 @@ export default function App() {
 
   const renderHeaderActions = () => (
     <View style={styles.headerActions}>
-      {doublesCount > 0 && (
-        <View style={styles.doublesBadge}><Text style={styles.doublesBadgeText}>🔥 {doublesCount}</Text></View>
-      )}
       <TouchableOpacity style={styles.scoreIconBtn} onPress={() => setShowScoreModal(true)}><Trophy color="#FFD700" size={20} /></TouchableOpacity>
     </View>
   );
@@ -1032,6 +1037,7 @@ export default function App() {
         </View>
         <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
         <SpecialRollOverlay />
+        <MessageBanner />
       </SafeAreaView>
     );
   }
@@ -1078,6 +1084,7 @@ export default function App() {
         </View>
         <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
         <SpecialRollOverlay />
+        <MessageBanner />
       </SafeAreaView>
     );
   }
@@ -1097,9 +1104,6 @@ export default function App() {
             <Text style={styles.titleNesh}>Nesh</Text>
             <Text style={styles.titleBesh}>Besh</Text>
           </View>
-          {doublesCount > 0 && (
-            <View style={styles.doublesBadge}><Text style={styles.doublesBadgeText}>🔥 {doublesCount}</Text></View>
-          )}
         </View>
         <View style={[styles.headerSide, { justifyContent: 'flex-end' }]}>
           <BorneBadge count={blackBorneOff} isWhite={false} />
@@ -1141,6 +1145,7 @@ export default function App() {
       <ScoreModal visible={showScoreModal} onClose={() => setShowScoreModal(false)} score={score} victoryInfo={victoryInfo} onResetTournament={startNewGame} />
       <InfoModal visible={showInfoModal} onClose={() => setShowInfoModal(false)} />
       <SpecialRollOverlay />
+      <MessageBanner />
     </SafeAreaView>
   );
 }
@@ -1156,8 +1161,6 @@ const styles = StyleSheet.create({
   titleBesh: { fontSize: 20, fontWeight: '900', color: '#32CD32', letterSpacing: 1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   scoreIconBtn: { backgroundColor: 'rgba(255,255,255,0.05)', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  doublesBadge: { backgroundColor: 'rgba(255, 69, 0, 0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#FF4500', marginTop: 2 },
-  doublesBadgeText: { color: '#FF4500', fontWeight: 'bold', fontSize: 10 },
   statusContainer: { paddingVertical: 8, alignItems: 'center' },
   status: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '600', fontStyle: 'italic' },
   mainContent: { flex: 1, justifyContent: 'center', paddingHorizontal: 4 },
@@ -1185,6 +1188,7 @@ const styles = StyleSheet.create({
   activePlayerCard: { borderColor: '#FFD700', backgroundColor: 'rgba(255,215,0,0.05)' },
   borneRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   borneCountLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: 'bold' },
+  sidebarDoublesRow: { marginTop: 6, alignItems: 'center' },
   centerStage: { flex: 1, justifyContent: 'center' },
   statusLabel: { color: 'rgba(255,255,255,0.3)', fontSize: 10, fontWeight: 'bold' },
   landscapeStatus: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontStyle: 'italic', textAlign: 'center', marginTop: 5 },
@@ -1279,8 +1283,13 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 9,
     fontWeight: '800',
-    marginTop: 3,
     letterSpacing: 0.5,
+  },
+  playerBarBorneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 3,
   },
   playerBarCenter: {
     flex: 1,

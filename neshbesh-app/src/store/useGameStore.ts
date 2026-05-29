@@ -7,7 +7,7 @@ import {
   hasBarPieces, canBearOff, hasAnyMove,
   calculatePossibleMoves, getDiceAfterMove, applyMove,
   applyNeshStrike, getFreeMoveFinals, calculateVictory,
-  isBarEntryBlocked, resetMoveCache,
+  isBarEntryBlocked, resetMoveCache, canFullyCompleteDouble,
   BEAR_OFF_WHITE, BEAR_OFF_BLACK,
 } from '../engine';
 
@@ -23,6 +23,25 @@ export const currentPlayerHasLegalMoves = (state: {
   if (state.availableDice.length === 0) return false;
   const bo = canBearOff(state.board, state.currentPlayer);
   return hasAnyMove(state.board, state.currentPlayer, state.availableDice, state.backward, bo);
+};
+
+// 4:5 chooser selectability gate (PRD §4.2, R1/R2).
+// Returns the list of double values 1..6 that should be enabled in the chooser:
+//   • If ANY v in 1..6 is fully completable from the current board, return ONLY
+//     those completable values (the rest are visually disabled).
+//   • Else (no value is fully completable), return all 6 as a fallback so the
+//     player can still pick something even though some pips will be forfeit.
+// Pure function — UI calls it directly with a state snapshot.
+export const getChoosableDoubleValues = (state: {
+  board: number[];
+  currentPlayer: PlayerSign;
+}): number[] => {
+  const completable: number[] = [];
+  for (let v = 1; v <= 6; v++) {
+    if (canFullyCompleteDouble(state.board, state.currentPlayer, v)) completable.push(v);
+  }
+  if (completable.length > 0) return completable;
+  return [1, 2, 3, 4, 5, 6];
 };
 
 export interface NeshBeshState {
@@ -129,12 +148,35 @@ const cancelPendingAutoRoll = () => {
   }
 };
 
+// Module-scope handle for special-roll message auto-clear timer (5:2 / 4:3).
+// Stored outside Zustand state so we can cancel an in-flight clear when the
+// next state transition arrives (avoiding accidental cross-turn clears).
+let _messageClearTimeout: ReturnType<typeof setTimeout> | null = null;
+const cancelPendingMessageClear = () => {
+  if (_messageClearTimeout !== null) {
+    clearTimeout(_messageClearTimeout);
+    _messageClearTimeout = null;
+  }
+};
+
 export const useGameStore = create<NeshBeshState>((set, get) => {
   // ─── Internal helpers ──────────────────────────────────────────────────────
+
+  // Schedule auto-clear of the `message` field after `ms` ms. The clear is a
+  // no-op if the message has already changed by the time the timer fires
+  // (snapshot equality check), so it can't stomp on a fresh message.
+  const scheduleMessageClear = (snapshot: string, ms: number = 3000) => {
+    cancelPendingMessageClear();
+    _messageClearTimeout = setTimeout(() => {
+      _messageClearTimeout = null;
+      if (get().message === snapshot) set({ message: null });
+    }, ms);
+  };
 
   const endTurnImpl = () => {
     const { currentPlayer, score, board, whiteBorneOff, blackBorneOff } = get();
     cancelPendingAutoRoll();
+    cancelPendingMessageClear();
     resetMoveCache();
     set({
       ...resetTurnState((-currentPlayer) as PlayerSign),
@@ -433,16 +475,20 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           if (barCount === 1) set({ pending52Flip: true });
           return;
         }
+        const msg52 = 'לך 5:2 אחורה!';
         enterMovingOrSkip({
           dice: [d1, d2],
           availableDice: [5, 2],
           backward: true,
-          message: '5:2 — Move 5 and 2 backwards!',
+          message: msg52,
         });
+        scheduleMessageClear(msg52);
         return;
       }
       if (is(4, 3)) {
-        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_43_ROLL', availableDice: [], message: '4:3 — Roll 1 die for your backward move!' });
+        const msg43 = 'הטל קוביה';
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_43_ROLL', availableDice: [], message: msg43 });
+        scheduleMessageClear(msg43);
         return;
       }
       if (is(5, 1)) {
@@ -476,7 +522,11 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           });
           return;
         }
-        set({ phase: 'SPECIAL_43_RESULT', availableDice: [d], backward: true, message: `לך אחורה ${d} צעדים` });
+        {
+          const msg43r = `לך אחורה ${d} צעדים!`;
+          set({ phase: 'SPECIAL_43_RESULT', availableDice: [d], backward: true, message: msg43r });
+          scheduleMessageClear(msg43r);
+        }
       } else if (phase === 'SPECIAL_51_ROLL') {
         // 5:1 always grants 4 moves of the rolled value. Bar entry and bear-off
         // each consume one of the four moves (engine handles pip math via
@@ -511,19 +561,20 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
       // ── Nesh Strike free moves ──────────────────────────────────────────────
       if (phase === 'SPECIAL_NESH_STRIKE_FREE_MOVE') {
-        // Restriction model:
-        //   • If the player STARTED this turn on the Bar (neshStrikeStartedOnBar
-        //     is latched true at the 6:5 trigger), BOTH free-move destinations
-        //     are restricted to opponent's home territory. The FIRST move's
-        //     source is also forced to be the bar checker (it's the bar entry);
-        //     the SECOND move's source can be any of the player's checkers.
-        //   • Otherwise both moves are unrestricted (source = any, target = any
-        //     non-blocked board point).
-        const startedOnBar = state.neshStrikeStartedOnBar;
-        const isFirstMove = state.neshStrikeFreeMovesLeft === 2;
-        const mustSelectBar = startedOnBar && isFirstMove;
+        // Restriction model (PRD §4.3, R4/R6 — live bar re-check):
+        //   • Restriction is re-evaluated at the START of each free move from
+        //     the LIVE board: if the player currently has a bar piece, this
+        //     move is an entry into opponent's home (target restricted, and
+        //     source forced to be the bar checker).
+        //   • Once the bar is empty, restrictions lift — source = any of the
+        //     player's checkers, target = any non-blocked board point.
+        // This naturally handles 1-on-bar (move 1 enters → move 2 full-board)
+        // and 2+-on-bar (move 1 enters, bar still occupied → move 2 still
+        // restricted) without latching state.
         const barIdx = sign === 1 ? 0 : 25;
-        const targetRestricted = startedOnBar; // both moves restricted when started on bar
+        const onBarNow = hasBarPieces(board, sign);
+        const mustSelectBar = onBarNow;
+        const targetRestricted = onBarNow;
         const finalsFromSource = (src: number): number[] => getFreeMoveFinals(board, sign, targetRestricted, src);
 
         if (selectedIndex === null) {
@@ -628,6 +679,7 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
       const stillHasBar = Math.abs(nb[sign === 1 ? 0 : 25]) > 0;
       const shouldFlip52 = pending52Flip && !stillHasBar && newDice.length > 0;
 
+      const flip52Msg = 'לך 5:2 אחורה!';
       set({
         board: nb,
         whiteBorneOff: newWBO,
@@ -640,16 +692,30 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         backward: shouldFlip52 ? true : (backward && newDice.length > 0),
         pending52Flip: shouldFlip52 ? false : pending52Flip,
         message: shouldFlip52
-          ? 'עכשיו שחק אחורה עם החייל השני'
+          ? flip52Msg
           : (captured ? 'Captured!' : borneOff ? 'Borne off!' : null),
       });
+      if (shouldFlip52) scheduleMessageClear(flip52Msg);
+      else cancelPendingMessageClear();
 
       afterMoveCheckDice(newDice);
     },
 
     // ── chooseDouble (4:5 special) ────────────────────────────────────────────
     chooseDouble: (value: number) => {
-      const { dice } = get();
+      const { dice, board, currentPlayer } = get();
+      // Defensive legality gate (PRD §4.2). If the UI somehow forwards a value
+      // that isn't in the choosable list (network race, stale state, etc.),
+      // log and ignore rather than silently corrupting the move pool.
+      if (value < 1 || value > 6) {
+        if (typeof console !== 'undefined') console.warn(`[chooseDouble] ignored invalid value ${value}`);
+        return;
+      }
+      const choosable = getChoosableDoubleValues({ board, currentPlayer });
+      if (!choosable.includes(value)) {
+        if (typeof console !== 'undefined') console.warn(`[chooseDouble] ignored non-choosable value ${value}`);
+        return;
+      }
       enterMovingOrSkip({
         dice: dice ?? [value, value],
         availableDice: [value, value, value, value],
@@ -800,16 +866,20 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
           if (barCount === 1) set({ pending52Flip: true });
           return;
         }
+        const msg52 = 'לך 5:2 אחורה!';
         enterMovingOrSkip({
           dice: [d1, d2],
           availableDice: [5, 2],
           backward: true,
-          message: '5:2 — Move 5 and 2 backwards!',
+          message: msg52,
         });
+        scheduleMessageClear(msg52);
         return;
       }
       if (is(4, 3)) {
-        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_43_ROLL', availableDice: [], message: '4:3 — Roll 1 die for your backward move!' });
+        const msg43 = 'הטל קוביה';
+        set({ dice: [d1, d2], doublesCount: 0, phase: 'SPECIAL_43_ROLL', availableDice: [], message: msg43 });
+        scheduleMessageClear(msg43);
         return;
       }
       if (is(5, 1)) {
