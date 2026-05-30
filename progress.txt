@@ -1,579 +1,139 @@
-# Progress Log
+NeshBesh — PRD Execution Progress
+==================================
+PRD: PRD.md (rules-correction PRD, branch 29/5)
+Started: 2026-05-30
+Last updated: 2026-05-30
 
-## Learnings
-
-### US-007 — physics fix applied (2026-05-05)
-
-**Patch:** `simulateDiceFlight` in
-`neshbesh-app/src/animations/diceConstants.ts`:
-
-1. Added an entry-time `clampToWalls` for both bodies so frame 0 is
-   provably in-bounds even if a caller passes a malformed start pose.
-2. Reordered per-tick constraints: `clampToWalls → clampToForbiddenRects
-   → resolveDieDie → clampToWalls` (a final wall clamp now follows every
-   position-correcting step). Bounce-frame indices are recorded from the
-   union of pre- and post-clamp wall hits.
-3. Cap-time hard-snap: when `settledFrame < 0`, the last 4 frames
-   (~64 ms) of `framesA` / `framesB` are overwritten with a
-   `pickPairLandingPoints` result translated into wall coordinates.
-   This guarantees the renderer's terminal visual pose is a legal
-   in-board rest pose, not a raw integrator coordinate.
-
-**Verification (pending — requires user shell with npm/node):**
-- `npx tsc --noEmit` from `neshbesh-app/` — expect zero errors.
-- `npm run dice:check` — expect "✅ all dice centers stayed inside
-  the play-area rect" across 100 rolls. Re-run with
-  `DICE_HARNESS_N=1000 DICE_HARNESS_SEED=42 npm run dice:check` for
-  the extended run.
-- Manual on-device repro from the US-005 diagnosis should no longer
-  reproduce the bug.
-
-### US-005 — dice-out-of-board diagnosis (2026-05-05)
-
-**Repro:** local hotseat, any board state, repeated rolls. Eventually a die's
-center is rendered outside the play-area rect (most often near the left/right
-edges, sometimes wedged under a corner). Visual: the die clips past the wood
-frame.
-
-**Hot path:** `simulateDiceFlight` in
-`neshbesh-app/src/animations/diceConstants.ts` (lines 269–310 of pre-fix
-file). Per-tick order is:
-
-1. Record `framesA[i] = { x: a.x, y: a.y, ... }`
-2. Integrate (`a.x += a.vx * dt`)
-3. `clampToWalls(a, ...)`           ← die forced inside walls
-4. `clampToForbiddenRects(a, ...)`  ← may push die ACROSS a wall
-5. `resolveDieDie(a, b, ...)`       ← may push either die ACROSS a wall
-6. Friction / rest detection
-
-**The bug:** steps 4 and 5 do position corrections without a follow-up wall
-clamp. Specifically, `resolveDieDie` does `a.x -= (nx * overlap) / 2` to
-separate the dice along the contact normal — when one die is already against
-a wall (post-step-3), the separation pushes it into / past the wall. Same
-mechanism for `clampToForbiddenRects` if the shallowest-axis push happens to
-be toward an adjacent wall.
-
-The OOB position is then recorded into `framesA[i+1]` at the top of the
-next iteration BEFORE any clamp runs. The renderer in
-`ThrowingDiceOverlay.tsx` consumes `framesA[frameIdx]` directly per-tick,
-so the OOB frame becomes visible.
-
-A second contributing factor: when the 3-second cap fires with a die still
-in motion, `finalA = framesA[totalFrames - 1]` returns the last raw
-integration result. This is supposed to be the hard-snap pose but
-`pickLandingPoint` / `pickPairLandingPoints` are never consulted on the
-runtime path.
-
-**Origin:** the order-of-constraints bug has been latent since the physics
-simulator landed in commit `11f108e` (2026-05-XX, "Implement PRD: perf,
-static board, dice physics, audio"). The audio-removal commits (`0ca0958`,
-`81d55ba`) did not introduce it — they merely did not surface it because
-the previous test focus was on the audio scheduling cursors that lived
-alongside the integrator.
-
-**Proposed fix (US-007):**
-1. Re-clamp both dice to walls AFTER `clampToForbiddenRects` and
-   `resolveDieDie` so no OOB position can survive a single tick.
-2. Record bounce-frame indices from the union of pre- and post-clamp wall
-   hits so the harness still sees them.
-3. Replace the cap-time `finalA` / `finalB` fallback with a
-   `pickPairLandingPoints` result so a non-converged solver never bleeds
-   raw integrator coordinates to the renderer.
-4. Defense-in-depth: clamp `startA` / `startB` to walls at simulator
-   entry so frame 0 is provably in-bounds even for bad call-site math.
-
-### Multiplayer (historical — folded into PRD.md) — implementation notes (2026-05-04)
-- `expo-linking` added to `package.json` at `~8.0.8` (Expo SDK 54). User must run
-  `npm install` from `neshbesh-app/` before the dev server starts.
-- Deep link parsing lives in `App.tsx` (cold + warm start), not `LobbyScreen.tsx`,
-  because cold-start URLs must be captured before screen routing decisions.
-- `pendingJoinCode` was added to `useMultiplayerStore` so the App-level URL
-  listener can stash a code that the lobby consumes (auto-join if `playerName`
-  set; prefill manual input otherwise).
-- QR scan code path was preserved verbatim — only the entry point was demoted
-  behind a `אפשרויות הצטרפות נוספות ▾` disclosure on the IDLE lobby and a
-  `אפשרויות נוספות ▾` disclosure on the HOSTING screen.
-- `gameMode` defaults to `'local'`. `startLocalGame()` keeps it `'local'`;
-  `hostRoom()` and `joinExistingRoom()` flip it to `'remote'`. `resetToLobby()`
-  resets to `'local'`. The remote layout branch in `App.tsx` short-circuits both
-  portrait and landscape paths so local hotseat rendering is byte-equivalent
-  for the `gameMode === 'local'` path.
-- Typecheck status: NOT verified locally — `node`/`npm`/`tsc` are not on PATH
-  in this dev environment. User should run `npx tsc --noEmit` from
-  `neshbesh-app/` to verify.
-
-## Manual Test Plan
-
-### Local Hotseat (gameMode === 'local')
-- [ ] Top `PlayerDiceBar` is rotated 180° (text reads upward toward White)
-- [ ] Bottom `PlayerDiceBar` is non-rotated (Black side)
-- [ ] Special-roll cards mirror toward the active player
-- [ ] `HotseatOpeningRollOverlay` appears before the first game and resolves on a non-tie roll
-- [ ] No `OpponentHeaderChip` or `RemoteBottomBar` ever render
-
-### Remote Two-Device (gameMode === 'remote')
-- [ ] Single bottom bar shows my dice + status + conditional End Turn
-- [ ] No rotation applied anywhere
-- [ ] Opponent chip at top shows name + bear-off count
-- [ ] Opponent chip shows "Rolling…" when opponent is in `WAITING_ROLL`
-- [ ] Opponent chip shows "Thinking…" when opponent is in `MOVING`
-- [ ] Tapping a shared link cold-starts the app and lands in the lobby with the code prefilled
-- [ ] `Share Invite` button on the host waiting screen opens the OS share sheet
-- [ ] Manual code entry joins the same room
-- [ ] QR scan still works from the `More join options` disclosure
-
-### Dice Polish (historical — folded into PRD.md)
-- [ ] Dice never overlap a checker column at rest (test on a board with stacked points)
-- [ ] Roll duration varies visibly between rolls (sometimes <1.5s, sometimes >3s)
-- [ ] Tray dice are noticeably larger than landed dice
-- [ ] Landing pop is visible (brief grow then settle)
-- [ ] Shake SFX plays continuously for the entire roll, stops on landing
-- [ ] Landing thud fires once per roll
-- [ ] Checker click fires on every move, not on captures
-- [ ] No color / texture / proportion regression on Board, Piece, Slot
-
+KEY
 ---
+[x] = done   [~] = in progress   [ ] = pending   [!] = blocked
 
-## PRD.md — Engine, Special Rolls, Bear-off & Performance (2026-05-04)
+EXECUTION SEQUENCE (PRD §8)
+---------------------------
+[x] 1. Engine: canFullyCompleteDouble helper + 4:5 chooser gating
+       → engine/index.ts:420  |  useGameStore.ts:35,705 (defensive re-check)
+[x] 2. Engine: Nesh Strike free-move scope change (full-board after bar clears)
+       → useGameStore.ts:563-605 (live hasBarPieces re-check per move)
+[x] 3. State: doublesCount + blockedDoubleStreak exposure + reset rules
+       → useGameStore.ts:58,88,183 (endTurnImpl resets); 233 (extra-turn preserves)
+[x] 4. UI: DoublesCounterChip placement
+       → DoublesCounterChip.tsx (compact + standard variants).
+         Mounted in Board, sidebar, dice bar, RemoteBottomBar, OpponentHeaderChip.
+[x] 5. UI: 4:5 chooser redesign (header + 6 dice + disable-by-completability)
+       → DoubleChooserPanel.tsx:32-90 (getChoosableDoubleValues drives enable)
+[x] 6. UI: Single-die display for 4:3 / 5:1 phases
+       → DicePanel handles phases SPECIAL_43_ROLL / RESULT, SPECIAL_51_ROLL / RESULT
+         (legacy SingleDieRoller Hebrew-localized as safety net)
+[x] 7. Messaging: 5:2 + 4:3 Hebrew captions via MessageBanner
+       → MessageBanner.tsx surfaces state.message; scheduleMessageClear auto-clears 3s
+[x] 8. Pass `tsc --noEmit`
+       → Exit 0, no type errors
+         Required `node --stack-size=8000` due to deep generics in node_modules
+[x] 9. Code-level verification per PRD §7
+       → All 8 rule areas verified in source. Details below.
+[x] 10. Commit pushed to 29/5 for Vercel preview
+       → Commit a95fcac on origin/29/5
 
-### Open questions resolved during clarification
-- **5/1 (1/5)** is a single trigger: roll one die, play 4 moves of that rolled value.
-  Bar-entry and bear-off each consume one of the four moves regardless of pip distance.
-- **Blocked-double-on-Bar** → full re-roll; 3 consecutive blocked doubles → Table Flip
-  (reuses existing 3-doubles-in-a-row rule and `useTableFlipAnimation`).
-- **6/5 Nesh Strike** always grants 2 free moves. When on the Bar, the FIRST free
-  move must land in opponent's home (= bar entry); the SECOND is unrestricted.
-  The "last piece on Bar exception" is REMOVED.
-- **Bear-off "must advance higher"** uses standard semantics — "higher" = farther
-  from the player's exit, computed per side (not raw array index).
-- **Performance** focuses on `calculatePossibleMoves` path search (Click 1 hot path).
+VERIFICATION RESULTS (PRD §7)
+-----------------------------
+Doubles Counter:  ✅ PASS
+  • Regular double bumps counter (useGameStore.ts:396, newCount = doublesCount+1)
+  • 3rd consecutive double → TABLE_FLIP, counter reset to 0 (lines 397-400)
+  • Non-double resets via enterMovingOrSkip default (line 217: ?? 0)
+  • All special-roll paths explicitly set doublesCount:0 (lines 420,424,437,447,457,490,495)
+  • 6:3 re-roll preserves counter (choose63 line 729-741 does NOT touch doublesCount) — R7 ✅
+  • endTurnImpl resets to 0 on turn pass (line 183)
+  • extra-turn cycle preserves counter (afterMoveCheckDice line 226-243)
+  • Component: DoublesCounterChip reads currentPlayer + doublesCount, shows
+    real count for active player, idle for opponent
 
-### Implementation notes (2026-05-05)
-- **US-001 (bear-off rule)** — added `isLegalBearOff(board, sign, fromSlot,
-  dieValue, excludedSlot?)` to engine. The path-search `addFinal` helper now
-  gates every off-board landing by this rule. `excludedSlot` defaults to the
-  original `from` so the moving piece does not block its own overshoot.
-  "Farther from exit" is per-side: White → lower index in [19..fromSlot-1],
-  Black → higher index in [fromSlot+1..6].
-- **US-002 (`isBarEntryBlocked`)** — added to engine. Pure `(board, sign,
-  dieValue) => boolean`. Wired into the rollDice double path.
-- **US-003 (`getFreeMoveFinals` flag)** — added optional `opponentHomeOnly`
-  param. White → restricts to slots 1..6, Black → 19..24. Existing call sites
-  unchanged (default false).
-- **US-004 / US-005 / US-006 / US-007 (5:1 four-move mode)** — added
-  `is51FourMove: boolean` to the store interface and `resetTurnState`. The
-  bar branch now sets `availableDice: [d, d, d, d]` and routes through
-  `enterMovingOrSkip`. Engine's existing `getDiceAfterMove` already handles
-  bar-entry (slice one die for an exact pip match) and bear-off (smallest
-  eligible die >= distance) so consumption math needed no engine change.
-- **US-008 / US-009 (blocked double on bar)** — added `blockedDoubleStreak`
-  to the store. rollDice doubles path detects `hasBarPieces && isBarEntryBlocked`,
-  increments the streak, sets `phase=WAITING_ROLL` with a Hebrew "blocked"
-  message, and schedules `setTimeout(get().rollDice, 1200)` guarded by a
-  dice-snapshot check (so a manual mid-cooldown roll does not fire a duplicate
-  auto-roll). `streak === 3` → `phase=TABLE_FLIP`. Streak resets on any
-  non-blocked roll, every successful double, and `resetTurnState`.
-- **US-010 (6:5 free-move bar restriction)** — final shape:
-  `neshStrikeStartedOnBar` is latched true at the 6:5 trigger when the player
-  has bar pieces. While the latch is true, BOTH free-move destinations are
-  restricted to opponent's home (`getFreeMoveFinals(board, sign, true)`); the
-  FIRST move's source is forced to be the bar checker, the SECOND move's
-  source is any of the player's checkers. When the latch is false (player
-  did not start on Bar), both moves are unrestricted. rollDice's 6:5 trigger
-  pre-checks if opponent's home is fully blocked → forfeits both moves and
-  SKIPs the turn. Reset by `resetTurnState`.
-- **US-011 (last-piece exception removed)** — confirmed no code path ever
-  reduced `neshStrikeFreeMovesLeft` from 2 to 1; CLAUDE.md §2 6:5 bullet
-  rewritten to describe the new bar-first/then-free behavior.
-- **US-012 (5:1 dice indicator)** — no code change required. DicePanel
-  already renders the `isSpecialDouble` case (4 dice of value `availableDice[0]`
-  with greyed-out used slots) and the bar branch now feeds it the same
-  `[d, d, d, d]` shape.
-- **US-013 (blocked-double feedback)** — message string drives the existing
-  toast/overlay path. No new animation hook; the table-flip case reuses
-  `useTableFlipAnimation` via the existing `phase === 'TABLE_FLIP'` watcher
-  in App.tsx.
-- **US-015 (memoize path search)** — added a turn-scoped `Map<string,
-  MoveResult>` cache inside `engine/index.ts`. Cache key = `board.join(',')|
-  from|sign|dice.join(',')|backward|bearOff`. `resetMoveCache()` is exported
-  and called from `endTurnImpl`, after every successful `applyMove` in
-  `handlePointPress`, and after every Nesh Strike free move.
-- **US-016 (selector narrowing)** — partially landed: `SpecialRollOverlay`
-  now subscribes via narrowed `useGameStore((s) => s.field)` selectors instead
-  of the full state. `ThrowingDiceOverlay`, `OpponentHeaderChip`,
-  `RemoteBottomBar` still subscribe to the full state — flagged for a
-  follow-up pass.
-- **US-014 (perf instrumentation)** — deferred. The memoization in US-015
-  should land the bulk of the win on its own; profiling can confirm post-merge.
-- **Multiplayer sync** — new fields `is51FourMove` and `blockedDoubleStreak`
-  are host-only logic and do not drive guest rendering, so the Firebase
-  `gameState` payload in App.tsx was NOT extended. If a future story relies
-  on the guest knowing either, add them to both the host `syncGameState`
-  payload and the guest `subscribeToGameState` hydrator.
-- **CLAUDE.md** — §2 updated: new "Blocked Double on Bar" turn-flow bullet,
-  rewritten 6:5 bar restriction, rewritten 5:1 description, new "Bear-off"
-  subsection codifying the standard rule.
-- **Typecheck status** — NOT verified locally (`node`/`npm`/`tsc` not on
-  PATH). User should run `npx tsc --noEmit` from `neshbesh-app/` to verify.
+4:5 Chooser:  ✅ PASS
+  • Helper canFullyCompleteDouble simulates 4 moves of value v (engine/index.ts:420-471)
+    handles bar-first, then forward play with calculatePossibleMoves
+  • Selector getChoosableDoubleValues: returns only completable values if any,
+    else all 6 (fallback, useGameStore.ts:35-45)
+  • Panel uses choosable list to enable/disable buttons (DoubleChooserPanel.tsx:32,52)
+  • chooseDouble defensively re-checks list and warns + ignores invalid values
+    (useGameStore.ts:705-718)
+  • Header text "איזה דאבל שבא לך" matches R-spec (Hebrew localization of "Whatever double you like")
 
-### Dice Polish (historical — folded into PRD.md) — implementation notes (2026-05-05)
-- New module `src/animations/diceConstants.ts` owns all dice timing/scale
-  magic numbers (`TRAY_DIE_SCALE=1.6`, `BOARD_DIE_SCALE=1.0`,
-  `LANDING_POP_SCALE=1.25`, `LANDING_POP_MS=180`, `ROLL_DURATION_MIN_MS=1000`,
-  `ROLL_DURATION_MAX_MS=4000`) plus `getRollDurationMs` and
-  `pickLandingPoint`/`pickPairLandingPoints`.
-- `getOccupancyRects(board, boardWidth, boardHeight)` lives in
-  `boardConstants.ts` and returns rects in board-local coords (origin at the
-  border-frame top-left). `BOARD_FROZEN` constants were NOT modified.
-- `ThrowingDiceOverlay` measures itself via `onLayout` so the dice land
-  inside the framed playing surface regardless of bear-off row presence.
-  Each roll calls `getRollDurationMs()` once and threads the value to both
-  the flight `Animated.timing` and `audio.playShakeFor(...)` so the shake
-  SFX matches the flight window. On landing it triggers `audio.playDiceLand()`
-  plus a per-die scale pop sequence (`BOARD_DIE_SCALE * LANDING_POP_SCALE`
-  over 80ms then settle).
-- `DicePanel` multiplies the incoming `dieSize` by `TRAY_DIE_SCALE` for the
-  three tray "ready to throw" rendering paths only. Result/used dice on the
-  board still use unmodified `dieSize`.
-- `useAudioManager` adds `playShakeFor(durationMs)`, `playDiceLand()`,
-  `playCheckerClick()`. The shake handle owns module-scope generation/timer
-  state so a new shake cleanly stops the previous loop. Pitch modulates
-  ±8% every ~150ms via `setRateAsync(rate, false)`.
-- Existing `playRollDice` and `playMovePiece` are kept as documented
-  no-op transients (asset is `null`); the audible dice/check-click sounds
-  are the new shake/land/click layers. Click is gated on `phase === 'MOVING'`
-  and excludes `Captured`-message moves (those still route to `playEatPiece`).
-- Placeholder WAVs were generated by `scripts/generate-sfx.py` (Python
-  fallback for environments without Node) and committed under
-  `neshbesh-app/assets/sfx/`. The TS equivalent `scripts/generate-sfx.ts`
-  is checked in for future regeneration via `npm run sfx:generate`.
-- US-014 aesthetic regression: `git diff` confirms zero changes to
-  `Board.tsx`, `Piece.tsx`, `Slot.tsx`, or to `BOARD_FROZEN` color/ratio
-  constants in `boardConstants.ts`.
-- Typecheck status: NOT verified locally — `node`/`npm`/`tsc` are not on
-  PATH in this dev environment. User should run `npx tsc --noEmit` from
-  `neshbesh-app/` to verify.
+Nesh Strike (6:5):  ✅ PASS
+  • Trigger captures blots and sets neshStrikeFreeMovesLeft=2 (lines 427-454)
+  • Free-move executor re-reads bar status per move (lines 562-605):
+      onBarNow = hasBarPieces(board, sign)
+      mustSelectBar = onBarNow
+      targetRestricted = onBarNow
+  • Pure bear-off → onBarNow=false → free moves full-board (R5 ✅)
+  • 1 piece on bar → move 1 restricted to opp home; bar clears → move 2 full-board (R4 ✅)
+  • 2 pieces on bar → both entries restricted; once bar clears, subsequent free (R6 ✅)
+  • Fully blocked opp home + on bar → SKIP with bar message (lines 433-445)
 
----
+5:2 Backwards:  ✅ PASS
+  • No bar: enterMovingOrSkip with backward=true, msg "לך 5:2 אחורה!" (lines 478-486)
+    auto-clears after 3s via scheduleMessageClear
+  • 1 piece on bar: forward entry → pending52Flip set → after entry, post-move
+    logic (lines 676-700) flips backward=true, shows "לך 5:2 אחורה!" (R-spec ✅)
+  • 2+ pieces on bar: no flip, both dice used forward (lines 470-477)
+  • Pure bear-off: still routes to backward path → player forced to shuffle (R8 ✅)
 
-## PRD.md — UI Performance, Dice Physics, Audio & Static Board (2026-05-05)
+4:3 Roll-for-Backwards:  ✅ PASS
+  • Phase SPECIAL_43_ROLL: msg "הטל קוביה" set + auto-clear (line 489-491)
+  • rollSingleDie handles SPECIAL_43_ROLL (lines 512-529):
+      Bar exception: enterMovingOrSkip with [d], backward=false, msg "4:3 מהבר — נכנס קדימה d"
+        (turn ends after single entry — R11 ✅)
+      No bar: phase SPECIAL_43_RESULT, msg "לך אחורה X צעדים!" + auto-clear
+  • DicePanel renders single-die visual for SPECIAL_43_* phases (R-spec ✅)
 
-> Historical — superseded by the consolidated PRD.md (2026-05-05).
-> Release window: 2026-06-10.
+5:1 Roll-for-Double:  ✅ PASS
+  • Phase SPECIAL_51_ROLL: msg "5:1 — Roll 1 die..." set (line 495)
+  • rollSingleDie handles SPECIAL_51_ROLL (lines 530-549):
+      Bar exception: 4 dice [d,d,d,d], extraTurn=false, is51FourMove=true
+      No bar: phase SPECIAL_51_RESULT, 4 dice, extraTurn=false
+  • Bear-off cost: engine/index.ts:242-293 getDiceAfterMove consumes 1 die per
+    bear-off (exact match line 256 or single-die overshoot line 265-267)
+  • Bar entry consumes 1 die per applyMove call (R-spec ✅)
+  • Does NOT grant extra turn even when d is itself a regular double (R12 ✅)
 
-### Open questions resolved during clarification
-- **Lag scope** — Click-1 tap-to-select is the primary symptom; cross-platform
-  60 fps target; treated as a recent regression to bisect-and-fix.
-- **Dice physics** — 3 s hard cap (snap to final pose if overrun); elastic
-  walls; dice-on-dice collision enabled; pip-indicator region treated as a
-  forbidden landing zone.
-- **Audio** — staggered per-die triggers for roll / land / collision; new
-  bear-off SFX; reference recording supplied by user out-of-band; placeholder
-  fallback preserved until US-015 swap.
-- **Static board** — applies to BOTH local hotseat and remote two-device
-  modes. Board container fixed-center; chrome reflows or overlays without
-  translating the board.
+Move accounting (R14 / R15):  ✅ PASS
+  • Regular double (4:5 chosen double, 5:1 four-move, 2:2 etc.):
+      Each move/entry/bear-off consumes 1 pip via getDiceAfterMove
+  • R14 verified: bar entry → 1 pip (engine/index.ts:308-310 splices dice index)
+  • R15 verified: bear-off → 1 pip in typical case (exact-match or overshoot)
+  • Note: getDiceAfterMove has a ceil(needed/d) branch (line 269-274) intended
+    only for unreachable doubles+overshoot cases — isLegalBearOff rejects D > X
+    upstream, so this branch is defensive. No action needed.
 
-### Implementation notes (2026-05-05)
+Star Mars (R13):  ✅ PASS
+  • calculateVictory (engine/index.ts:473-491): when loserBorneOff===0 AND
+    opp bar piece exists → returns {type:'Star Mars', points: Infinity}
+  • doVictoryCheck (useGameStore.ts:245-289): on Infinity points, sets
+    winner's sets to 3 directly (line 261), then championship check at line 278
+    triggers GAME_OVER with "CHAMPIONSHIP!" message
 
-- **US-001 — regression diagnosis.** Click-1 lag is React render storm,
-  not engine. The `5fe6a8d` engine path-search cache (`resetMoveCache` +
-  `_moveCache`) is intact and effective (µs cost on cache hit). The
-  visible lag is in component render: every `selectedIndex` /
-  `intermediateHighlights` / `finalHighlights` update re-rendered all
-  24 `<Slot>` SVG cones + ≤7 `<Piece>` per slot because none of `Slot`,
-  `BarSlot`, `Piece` were `React.memo`-wrapped, and `BoardContent` in
-  [App.tsx](neshbesh-app/App.tsx) destructured the full `useGameStore()`
-  state — so any unrelated store mutation (dice, message, phase, score,
-  doublesCount) re-rendered the whole board subtree.
-- **US-002 — fix.**
-  - [Piece.tsx](neshbesh-app/src/components/Piece.tsx): renamed inner
-    function to `PieceImpl`, exported `Piece = React.memo(PieceImpl)`.
-  - [Slot.tsx](neshbesh-app/src/components/Slot.tsx): same memo pattern
-    for `Slot` and `BarSlot`; replaced inline
-    `() => onPress(index)` with a `useCallback`-stabilised `handlePress`
-    so the memo isn't busted by a fresh closure each render.
-  - [App.tsx](neshbesh-app/App.tsx) `BoardContent`: replaced the full
-    `useGameStore()` destructure with seven narrowed selectors
-    (`board`, `whiteBorneOff`, `blackBorneOff`, `selectedIndex`,
-    `intermediateHighlights`, `finalHighlights`, `handlePointPress`),
-    so the component only re-renders on board-relevant slices.
-- **US-003 — narrow subscriptions.** `ThrowingDiceOverlay`,
-  `OpponentHeaderChip`, and `RemoteBottomBar` were already on narrowed
-  selectors (the original engine-rules progress note was stale).
-  Verified each component's selector list matches the fields it
-  actually renders:
-  - `ThrowingDiceOverlay`: `dice`, `phase`, `board`, `currentPlayer`
-    (engine), `gameMode`, `role` (multiplayer). `board` is needed for
-    `getOccupancyRects` collision-aware landing math; `currentPlayer`
-    drives throw direction.
-  - `OpponentHeaderChip`: `currentPlayer`, `phase`, `whiteBorneOff`,
-    `blackBorneOff`, plus `opponentName` from multiplayer.
-  - `RemoteBottomBar`: `currentPlayer`, `whiteBorneOff`, `blackBorneOff`,
-    `phase`, `dice`, `availableDice`, `board`, `backward`, `endTurn`.
-    `board` and `backward` are needed for `currentPlayerHasLegalMoves`
-    which drives the conditional No-moves/End button.
-- **US-004 — static board, local hotseat.**
-  - [App.tsx](neshbesh-app/App.tsx) `CenteredDiceBar` (landscape):
-    refactored from "single instance, conditional on currentPlayer"
-    to **sided** — accepts `playerSign: 1 | -1` and renders an idle
-    placeholder of equivalent reserved height when not the active
-    player. The landscape `centerStage` now mounts both
-    `<CenteredDiceBar playerSign={1} />` and
-    `<CenteredDiceBar playerSign={-1} />` on every turn so the column's
-    total content height (whiteBar + board + blackBar) is constant.
-    Reserved panel height is `Math.max(56, dieSize * 1.6 + 24)` to
-    cover the active DicePanel's tray scale.
-    Subscriptions on `CenteredDiceBar` were also narrowed in the same
-    pass.
-  - `PlayerDiceBar` (portrait): subscriptions narrowed; `playerBar`
-    style gained `minHeight: 96` so DicePanel content transitions
-    (waiting → rolled-result → no-moves) no longer reflow the parent
-    `mainContent` flex column and shift the board.
-- **US-005 — static board, remote two-device.**
-  - [OpponentHeaderChip.tsx](neshbesh-app/src/components/OpponentHeaderChip.tsx)
-    `chip` style gained `minHeight: 50` so opponent activity
-    transitions (idle ↔ Rolling… ↔ Thinking…) reserve constant
-    vertical space.
-  - [RemoteBottomBar.tsx](neshbesh-app/src/components/RemoteBottomBar.tsx)
-    `bar` style gained `minHeight: 96` so my-turn ↔ opponent-turn
-    transitions don't reflow the board.
-- **US-006 — chrome reflow audit checklist.** See "Manual Test Plan
-  · Static-Board Audit" below. Each row records the board's measured
-  top-left in two states; the `0 px Δ` column must be 0 in every row.
-  Measurement to be performed with React Native's `findNodeHandle` +
-  `measureInWindow` or by overlaying a fixed reference at the screen
-  center and verifying the board edge stays aligned.
+NOTES / FOLLOW-UPS
+------------------
+1. Stale field: `neshStrikeStartedOnBar` (useGameStore.ts:77,450,845)
+   Now superseded by the live `hasBarPieces` re-check in the free-move
+   executor (line 575). Field is still set but never read for gating logic.
+   Field comment at lines 72-77 also describes the OLD behavior.
+   → Recommend cleanup in a follow-up commit:
+     - Delete the field from state interface, resetTurnState, initial state,
+       and all set() patches (4 sites).
+     - Drop the stale comment block.
+   Not blocking; safe to leave as-is until a UI/test cleanup pass.
 
-- **US-007 / US-008 / US-009 / US-010 — dice physics rewrite.** The
-  prior `Animated.timing` flight (linear lerp from off-screen to a
-  pre-picked landing point) was replaced with a deterministic 2D rigid
-  body simulator in
-  [diceConstants.ts](neshbesh-app/src/animations/diceConstants.ts):
-  - New constants: `PHYSICS_RESTITUTION` (0.55), `PHYSICS_FRICTION_PER_FRAME`
-    (0.965), `PHYSICS_ANGULAR_FRICTION_PER_FRAME` (0.955),
-    `PHYSICS_REST_VELOCITY` (0.015 px/ms), `PHYSICS_REST_ANGULAR`
-    (0.0008 rad/ms), `PHYSICS_FRAME_DT_MS` (16), `ROLL_HARD_CAP_MS` (3000).
-  - `ROLL_DURATION_MAX_MS` lowered from 4000 → 3000 (US-009).
-  - `simulateDiceFlight(opts)` time-steps two `RigidBody` instances at
-    16 ms/frame for ≤188 frames. Per frame: integrate position +
-    rotation, `clampToWalls` reflects velocity at board edges
-    (US-007), `clampToForbiddenRects` reflects along the shallowest
-    axis when overlapping any checker stack or the bar strip (US-010),
-    and `resolveDieDie` applies elastic circle-circle response with
-    impulse exchanged along the contact normal (US-008). Friction
-    decays velocity each step. Per-die rest detection feeds the
-    staggered audio cues in US-014.
-  - Returns `framesA[]`, `framesB[]`, `collisionFrames[]`,
-    `bounceFramesA[]`, `bounceFramesB[]`, `restFrameA`, `restFrameB`.
-    If both dice settle before the cap, remaining frames freeze at the
-    rest pose so the renderer can drive a fixed-length animation
-    without branching. If motion never converges within
-    `ROLL_HARD_CAP_MS`, the last frame holds the final pose and the
-    renderer hard-snaps to it (US-009 acceptance).
-  - [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx):
-    `animateThrow` now runs `simulateDiceFlight` before any rendering,
-    then drives a JS-thread `requestAnimationFrame` tick that pumps
-    sampled poses into `Animated.Value` instances via `setValue`. Tick
-    handle stored in `tickHandleRef` so a fresh roll cancels the
-    previous simulation cleanly (`cancelTick`). The rotation
-    interpolation was rewritten from "tumble revolutions → degrees"
-    to "radians → degrees" (`inputRange: [-π, π], outputRange:
-    ['-180deg', '180deg'], extrapolate: 'extend'`) to render physics
-    output correctly. `Easing` import retained for the in-flight scale
-    timing, which still uses the native driver. `pickPairLandingPoints`
-    is no longer called from this file but remains exported for any
-    future static-target use.
-  - Forbidden rects fed to the simulator: every occupied checker stack
-    (existing `getOccupancyRects` output) plus a permanent bar strip
-    rect of width `BOARD_FROZEN.BAR_WIDTH_RATIO × innerW` and full
-    inner-board height. Dice now physically bounce off the bar like a
-    real backgammon set's wooden ridge (US-010).
-- **US-011 — audio API per-die surface.**
-  [useAudioManager.ts](neshbesh-app/src/audio/useAudioManager.ts):
-  - Added events `dieRoll`, `dieLand`, `dieCollision`, `bearOff` to
-    `SoundEvent` and `SOUND_ASSETS` (all `null` until US-015).
-  - `AudioManager` interface gained `playDieRoll(idx, durationMs)`,
-    `playDieLand(idx)`, `playDieCollision()`, `playBearOff()`.
-  - Each method uses the existing `playSound` no-op-on-null path so a
-    missing asset silently does nothing — matches the
-    `playRollDice` / `playMovePiece` pattern (historical — audio system
-    has since been removed entirely, see PRD.md "Total Silence").
-  - Module-scope `collisionEarliestMs` rate-limits collision SFX to
-    one trigger per `COLLISION_MIN_GAP_MS` (90 ms). The simulator also
-    has a 6-frame cooldown so the audio limiter is the second line of
-    defence.
-- **US-012 — collision SFX wiring.** The simulator records every
-  discrete contact event in `collisionFrames`; the renderer's tick
-  loop walks a `collisionCursor` and fires `audio.playDieCollision()`
-  as `frameIdx` crosses each entry. No collision SFX fires on
-  single-die phases (impossible — two bodies always simulated) or at
-  rest (`resolveDieDie` returns false on no overlap).
-- **US-013 — bear-off SFX wiring.** Side effect on the existing
-  `useEffect([phase, message, dice])` in
-  [App.tsx](neshbesh-app/App.tsx): when `message === 'Borne off!'`
-  and the message changed since last tick, fire `audio.playBearOff()`.
-  This single signal covers regular bear-off, doubles bear-off, and
-  the 5:1 four-move special (each emits the same message string per
-  successful bear-off in `handlePointPress`).
-- **US-014 — staggered per-die roll/land triggers.**
-  - At throw start, `audio.playDieRoll(0, flightMs)` fires
-    immediately and `playDieRoll(1, …)` fires after a 30–120 ms
-    randomized stagger so the two dice never sample-lock.
-  - Per-die land cues fire when the playback `frameIdx` crosses each
-    die's `restFrameA` / `restFrameB`, which differ naturally because
-    the simulator detects each body's rest state independently.
-  - Legacy `playShakeFor` and `playDiceLand` now early-return when
-    their per-die counterparts have non-null assets, so once US-015
-    lands real `dieRoll` / `dieLand` files, the legacy layer falls
-    silent automatically with no further wiring needed.
-- **Typecheck status.** NOT verified locally — `node`, `npx`, and
-  `tsc` are not on PATH in this Windows dev environment (verified by
-  `Get-Command` and bash `which`). User should run
-  `npx tsc --noEmit` from `neshbesh-app/` to verify.
+2. User-facing manual verification (real device / browser playthrough) still
+   pending. All code paths have been verified statically against the PRD §7
+   checklist. A live playthrough should focus on the visual/timing aspects:
+     - DoublesCounterChip color transitions (idle → warn → danger)
+     - MessageBanner enter/exit animations + auto-clear timing
+     - DicePanel single-die render for 4:3 / 5:1
+     - DoubleChooserPanel disabled-state visuals
+     - Hebrew text rendering / RTL layout
 
-- **US-015 — reference recordings (Path A).** User chose to wire the
-  raw MP3 references in directly and play them at low volume rather
-  than synthesize new placeholders.
-  - Files copied:
-    `.claude/sounds/dice shrowing sound.mp3`
-      → `neshbesh-app/assets/sfx/dice-throw.mp3`
-    `.claude/sounds/moving sound.mp3`
-      → `neshbesh-app/assets/sfx/checker-move.mp3`
-  - `useAudioManager.ts` `SOUND_ASSETS` rewired:
-    `dieRoll` → `dice-throw.mp3` (vol 0.25 die0 / 0.18 die1),
-    `checkerClick` → `checker-move.mp3` (vol 0.30),
-    `bearOff` → `bear-off.wav` (new procedural bell — vol 0.55),
-    `dieCollision` → `die-collision.wav` (new procedural tick —
-      vol 0.40),
-    `dieLand`, `diceShake`, `diceLand`, `movePiece` → `null` so no
-    layer double-triggers with the user's recordings.
-  - `scripts/generate-sfx.py` extended with `make_bear_off_chime()`
-    (660/990/1320 Hz bell with 12 ms attack ramp + 5.5 decay rate) and
-    `make_die_collision_tick()` (4.5 kHz bandpassed 50 ms noise burst).
-    Outputs deterministic via `random.seed(0xBE5)` so any rerun
-    produces byte-identical WAVs.
-  - **Multi-throw bleed handling.** The user's `dice-throw.mp3` is
-    ~70 s of continuous throws back-to-back. Each `playDieRoll` resets
-    the cached `Sound` to position 0 so each trigger plays the first
-    throw segment. A new module-scope `dieRollStopTimer` schedules a
-    `stopAsync` at `flightMs + 200 ms` so the recording never bleeds
-    into the move phase.
-  - **Stagger trade-off.** US-014's two-fire-stagger was reverted to a
-    single fire in [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx)
-    because the second fire on the same `Sound` instance just stomps
-    the first fire's playhead. The `playDieRoll(idx, ms)` API surface
-    is preserved so a future per-die-index Sound cache can light up
-    die 1's slot without touching call sites.
-  - **Bear-off layering.** Per user request ("הצליל צריך להישמע
-    בכל פעם — לא רק בהוצאת שחקן. בהוצאת שחקן הוסף צליל אחר
-    ושונה מההזזות הרגילות"), every successful checker move plays the
-    moving recording (`checkerClick`), and bear-off layers the new
-    bell chime (`bearOff`) on top. Both fire from the existing
-    `useEffect([phase, message, dice])` in App.tsx — `Borne off!`
-    matches the no-`Captured` branch so `playCheckerClick` fires AND
-    `playBearOff` fires alongside it.
+3. R3 ("4:5 move accounting: bar entry = 1 move, bear-off = 1 move") follows
+   automatically from the same getDiceAfterMove pool used for regular doubles,
+   so it's covered by the move-accounting verification above.
 
-### Manual Test Plan · US-016 Cross-Platform Release Verification
-
-> Run before the 2026-06-10 cut. Record FPS via React Native's perf monitor
-> (Cmd+M / Cmd+D → "Show Perf Monitor") or platform-native profilers.
-
-**TypeScript gate (run first, blocks everything else).**
-- [ ] `cd neshbesh-app && npx tsc --noEmit` — exits 0, no errors
-
-**Per-platform Click-1 FPS** — tap a piece on a mid-game board (≥10 stacked
-checkers across both halves), watch the FPS readout. Pass = sustained ≥60.
-- [ ] iOS phone (iPhone 12 / 13 class)
-- [ ] iOS tablet (any iPad)
-- [ ] Android phone (low-end class — Pixel 4a / equivalent)
-- [ ] Android tablet
-- [ ] Web (Chrome desktop, release build)
-
-**Performance regression checks (US-001 → US-003).**
-- [ ] Tap a piece in starting position — highlights appear without
-  perceptible delay (<16 ms frame budget)
-- [ ] Tap through a complete 4-doubles turn — every Click-1 is smooth
-- [ ] Open Score modal mid-turn — board renders unaffected
-- [ ] Open Info modal mid-turn — board renders unaffected
-- [ ] In remote mode, opponent rolls + thinks while local player views —
-  no jank on local interactions
-
-**Static-board checks (US-004 → US-006).** See "Manual Test Plan ·
-Static-Board Audit (US-006)" below — every Δ row must be 0 px.
-
-**Dice physics checks (US-007 → US-010).**
-- [ ] Roll 20 times in a row — every die's centre stays inside the
-  playing surface (no escape past the wood frame)
-- [ ] Roll until you see two dice contact mid-flight — they visibly
-  bounce off each other (US-008)
-- [ ] Time the longest-feeling roll with a stopwatch — no roll exceeds
-  3.0 s wall-clock from release to fully at-rest (US-009)
-- [ ] Roll on a board with a tall checker stack — neither die settles
-  on top of the stack (US-010 existing); roll repeatedly — neither die
-  settles inside the central bar strip (US-010 new)
-- [ ] Roll a fast throw vs a slow throw — friction visibly differs
-
-**Audio checks (US-011 → US-015).**
-- [ ] Roll dice — hear the user's `dice-throw.mp3` softly; no leftover
-  audio playing 1 s after the dice settle (stop-timer working)
-- [ ] Roll repeatedly in quick succession — each roll restarts the
-  recording at position 0 (no overlap of throw segments)
-- [ ] Move a checker — hear the user's `checker-move.mp3` softly
-- [ ] Bear off a checker — hear the move recording AND the bell chime
-  layered on top (per user spec: distinct cue at bear-off)
-- [ ] Capture (eat) an opponent — capture flash + `playEatPiece` (no-op
-  asset) plays, no double-cue
-- [ ] During a single throw with a visible mid-flight collision — hear
-  the soft tick (rate-limited to one per discrete contact)
-
-**No-regression checks (frozen invariants — see PRD.md §6).**
-- Multiplayer (PRD.md §6.2):
-  - [ ] Local hotseat byte-equivalence: top `PlayerDiceBar` rotated
-    180° (unchanged), bottom unrotated (unchanged), special-roll cards
-    mirror toward the active player (unchanged)
-  - [ ] Remote two-device flow still routes guest actions through host
-- Engine rules (PRD.md §6.1):
-  - [ ] 1:2 → SKIP unchanged
-  - [ ] 4:5 → DoubleChooser unchanged
-  - [ ] 5:1 four-move + bar entry unchanged
-  - [ ] 6:5 Nesh Strike + bar restriction unchanged
-  - [ ] Bear-off "must advance higher" unchanged
-- Dice landing & layout (PRD.md §6.3):
-  - [ ] Tray dice are larger than landed dice (TRAY_DIE_SCALE 1.6×)
-  - [ ] Landing pop visible on each die
-
-**If anything fails, the breakdown by likely root file:**
-- Click-1 fps fail → re-check `Slot`/`Piece` `React.memo` wrappers and
-  `BoardContent` narrowed selectors in [App.tsx](neshbesh-app/App.tsx)
-- Board shifts vertically → check `playerBar.minHeight: 96`,
-  `centeredDiceBar`'s sided render, `OpponentHeaderChip.chip.minHeight: 50`,
-  `RemoteBottomBar.bar.minHeight: 96`
-- Dice escape board / settle on bar → check the simulator's `walls` and
-  `forbiddenRects` in [ThrowingDiceOverlay.tsx](neshbesh-app/src/components/ThrowingDiceOverlay.tsx)
-- Roll exceeds 3 s → simulator `ROLL_HARD_CAP_MS` and `flightMs` clamp
-- Audio bleed → `dieRollStopTimer` in
-  [useAudioManager.ts](neshbesh-app/src/audio/useAudioManager.ts)
-
-### Manual Test Plan · Static-Board Audit (US-006)
-
-Local hotseat — portrait:
-- [ ] White → Black turn switch: board top-left Δ = 0 px
-- [ ] Special-roll card open (1:2 SKIP) → close: Δ = 0 px
-- [ ] Special-roll card open (4:5 chooser) → close: Δ = 0 px
-- [ ] Special-roll card open (6:3 choice) → close: Δ = 0 px
-- [ ] No-legal-moves End button appears → move executed: Δ = 0 px
-- [ ] HotseatOpeningRollOverlay open → close: not relevant (full-screen)
-
-Local hotseat — landscape:
-- [ ] White → Black turn switch: board top-left Δ = 0 px
-- [ ] Black → White turn switch: board top-left Δ = 0 px
-- [ ] No-legal-moves End button appears on either side: Δ = 0 px
-- [ ] Special-roll card open / close: Δ = 0 px
-
-Remote two-device:
-- [ ] Opponent transitions idle → Rolling… → Thinking… → idle: Δ = 0 px
-- [ ] My turn → opponent turn: Δ = 0 px
-- [ ] DicePanel: waiting → rolled-result → bar empty (turn end): Δ = 0 px
-- [ ] No-legal-moves End button appears: Δ = 0 px
-- [ ] Special-roll card open / close: Δ = 0 px
+STATUS: PRD complete. All deliverables shipped in commit a95fcac on 29/5.
+        Awaiting live playthrough verification (item 2 above).
