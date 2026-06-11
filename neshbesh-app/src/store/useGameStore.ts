@@ -107,7 +107,7 @@ export interface NeshBeshState {
   handlePointPress: (index: number) => void;
   chooseDouble: (value: number) => void;
   choose63: (reroll: boolean) => void;
-  confirmTableFlip: () => void;
+  confirmTableFlip: (recolor?: boolean) => void;
   acknowledgeSkip: () => void;
   confirmSpecialResult: () => void;
   endTurn: () => void;
@@ -741,7 +741,56 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
     },
 
     // ── confirmTableFlip ──────────────────────────────────────────────────────
-    confirmTableFlip: () => endTurnImpl(),
+    // 3 consecutive doubles = "Flip the Table". In LOCAL hotseat we literally
+    // spin the board 180° AND swap every checker's colour (white↔black), bar
+    // pieces included: newBoard[i] = -board[25 - i]. This mirror+recolour is a
+    // pip-perfect symmetry — each checker keeps its exact distance-to-exit, it
+    // just changes owner — so the player who rolled the doubles is now staring
+    // at the opponent's army (recoloured to theirs) and vice-versa.
+    //
+    // currentPlayer is deliberately LEFT UNCHANGED: the dice stay the same
+    // colour, but because every piece was recoloured, that colour is now the
+    // *opponent's* army — so the opponent is the one who plays next, exactly as
+    // the user described ("the dice remain the same colour but the player is
+    // different"). Borne-off counts and the match score follow their owners
+    // across the swap (white↔black) so totals and points stay attached to the
+    // right human.
+    //
+    // In REMOTE two-device play each player is hard-bound to a fixed colour and
+    // device (host = white, guest = black), so a colour swap would hand a player
+    // their opponent's army. There we keep the classic behaviour — the turn
+    // simply passes to the opponent (no recolour) — and pass recolor=false.
+    confirmTableFlip: (recolor: boolean = true) => {
+      if (!recolor) {
+        endTurnImpl();
+        return;
+      }
+      const { board, currentPlayer, score, whiteBorneOff, blackBorneOff } = get();
+      cancelPendingAutoRoll();
+      cancelPendingMessageClear();
+      resetMoveCache();
+
+      const flipped = new Array<number>(26);
+      for (let i = 0; i < 26; i++) flipped[i] = -board[25 - i];
+
+      set({
+        // Keep the SAME colour active — the recoloured board makes the opponent
+        // the controller of that colour.
+        ...resetTurnState(currentPlayer),
+        doublesCount: 0,
+        board: flipped,
+        // Pieces changed colour, so the borne-off tallies and the score follow
+        // their owners white↔black.
+        whiteBorneOff: blackBorneOff,
+        blackBorneOff: whiteBorneOff,
+        score: {
+          whitePoints: score.blackPoints,
+          blackPoints: score.whitePoints,
+          whiteSets: score.blackSets,
+          blackSets: score.whiteSets,
+        },
+      });
+    },
 
     // ── acknowledgeSkip (1:2) ─────────────────────────────────────────────────
     acknowledgeSkip: () => endTurnImpl(),

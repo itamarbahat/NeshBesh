@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MotiView } from 'moti';
 import { useGameStore } from '../store/useGameStore';
+import { useMultiplayerStore } from '../store/useMultiplayerStore';
 import { generateInitialBoard } from '../engine';
 
 /**
@@ -24,6 +25,9 @@ export const SpecialRollOverlay: React.FC = () => {
   const currentPlayer = useGameStore((s) => s.currentPlayer);
   const confirmTableFlip = useGameStore((s) => s.confirmTableFlip);
   const startNewGame = useGameStore((s) => s.startNewGame);
+  // Local hotseat recolours/mirrors the board on flip; remote (fixed colour per
+  // device) just passes the turn — see confirmTableFlip in useGameStore.
+  const gameMode = useMultiplayerStore((s) => s.gameMode);
 
   const visible =
     phase === 'TABLE_FLIP' ||
@@ -81,7 +85,7 @@ export const SpecialRollOverlay: React.FC = () => {
               </MotiView>
               <Text style={styles.title}>FLIP THE TABLE!</Text>
               <Text style={styles.body}>3 consecutive doubles — turn passes to opponent.</Text>
-              <Btn label="Continue" onPress={confirmTableFlip} />
+              <Btn label="Continue" onPress={() => confirmTableFlip(gameMode !== 'remote')} />
             </>
           )}
 
