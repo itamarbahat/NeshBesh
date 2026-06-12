@@ -9,6 +9,7 @@ import {
   Animated as RNAnimated,
   useWindowDimensions,
   Modal,
+  Platform,
   Pressable,
 } from 'react-native';
 import ReanimatedView from 'react-native-reanimated';
@@ -280,8 +281,11 @@ const BoardContent: React.FC<{
 
   const pointPress = onPointPressOverride || handlePointPress;
 
+  // The wrapper always hugs the boardWidth-driven Board: the old 92%/
+  // aspectRatio landscape override sized itself independently of the Board
+  // inside it, blowing up the column on wide (desktop web) windows.
   return (
-    <ReanimatedView.View style={[styles.boardWrapper, isLandscape && styles.boardWrapperLandscape, boardAnimatedStyle]}>
+    <ReanimatedView.View style={[styles.boardWrapper, boardAnimatedStyle]}>
       <EatImpactFlash visible={showEatFlash} />
 
       <Board
@@ -693,17 +697,36 @@ export default function App() {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
+  // ── Multiplayer screen routing ──────────────────────────────────────────
+  // Subscribed above the sizing block: the remote layout has different chrome
+  // (header chip + bottom bar, no sidebars) so board sizing depends on it.
+  const mpScreen = useMultiplayerStore((s) => s.screen);
+  const mpRole = useMultiplayerStore((s) => s.role);
+  const mpRoomId = useMultiplayerStore((s) => s.roomId);
+  const mpIsMultiplayer = useMultiplayerStore((s) => s.isMultiplayer);
+  const mpGameMode = useMultiplayerStore((s) => s.gameMode);
+
   // ── Fixed-proportion board sizing (same ratio every device) ─────────────────
   // BOARD_ASPECT = 1.52 → boardHeight = boardWidth / 1.52
-  // Chrome budget: header + legend + dice bars + safe areas.
-  //   portrait: ~320px of chrome   |   landscape: ~200px of chrome
-  const chromeH = isLandscape ? 200 : 320;
-  const sideChromeW = isLandscape ? 260 : 12;   // sidebars in landscape
+  // Chrome budget: header + legend + dice bars + safe areas. Native is
+  // portrait-locked, so the landscape budgets only ever apply on web
+  // (desktop browsers): hotseat = header ~46 + 2×(96+12) centered dice bars
+  // + bear-off margins; remote = header ~46 + opponent chip ~58 + bottom bar
+  // ~104. (Calibrated via headless-browser screenshots at 1920×937, 1366×625.)
+  const isRemote = mpGameMode === 'remote';
+  const chromeH = isLandscape ? (isRemote ? 240 : 280) : 320;
+  // Landscape hotseat reserves the real sidebar width (18%, capped at 180px on
+  // wide desktop windows — keep in sync with styles.sidebar maxWidth) + row
+  // padding; remote has no sidebars.
+  const sidebarW = isLandscape && !isRemote ? Math.min(width * 0.18, 180) : 0;
+  const sideChromeW = isLandscape ? (isRemote ? 24 : 2 * sidebarW + 40) : 12;
   const availW = width - sideChromeW;
   const availH = height - chromeH;
   // Board total height ≈ boardWidth/1.52 + bear-off row (~40)
   const fromH = (availH - 40) * BOARD_ASPECT;
-  const boardWidth = Math.max(280, Math.min(availW, fromH));
+  // Sanity cap so 4K browser windows don't produce an absurdly huge board.
+  const BOARD_MAX_WEB = Platform.OS === 'web' ? 1200 : Number.POSITIVE_INFINITY;
+  const boardWidth = Math.max(280, Math.min(availW, fromH, BOARD_MAX_WEB));
 
   // Derive checker diameter from board width using the frozen ratios, and lock
   // die size to ~0.6x of the checker — comfortably within the 0.5–0.66 band.
@@ -713,14 +736,10 @@ export default function App() {
   const checkerDiameter = Math.round(slotW * BOARD_FROZEN.PIECE_SLOT_RATIO);
   // Hard-locked at 0.6x of checker diameter (within the 0.5–0.66 band).
   // Significantly smaller than before, never touches the surrounding borders.
-  const dieSize = Math.max(14, Math.round(checkerDiameter * 0.6));
-
-  // ── Multiplayer screen routing ──────────────────────────────────────────
-  const mpScreen = useMultiplayerStore((s) => s.screen);
-  const mpRole = useMultiplayerStore((s) => s.role);
-  const mpRoomId = useMultiplayerStore((s) => s.roomId);
-  const mpIsMultiplayer = useMultiplayerStore((s) => s.isMultiplayer);
-  const mpGameMode = useMultiplayerStore((s) => s.gameMode);
+  // Web cap keeps dice-bar heights inside the landscape chrome budget; never
+  // binds on native (board ≤ 768px → die ≤ 25).
+  const dieCap = Platform.OS === 'web' ? 34 : Number.POSITIVE_INFINITY;
+  const dieSize = Math.max(14, Math.min(Math.round(checkerDiameter * 0.6), dieCap));
 
   // ── Deep link handling: parse */join/:code and stash in store ────────────
   // The lobby reads `pendingJoinCode` and either auto-joins (name set) or
@@ -728,7 +747,7 @@ export default function App() {
   useEffect(() => {
     const parseAndStash = (url: string | null) => {
       if (!url) return;
-      // Accept neshbesh://join/CODE OR https://neshbesh.app/join/CODE
+      // Accept neshbesh://join/CODE OR https://nesh-besh.vercel.app/join/CODE
       const match = url.match(/\/join\/([A-Z0-9]{4,8})/i);
       if (!match) return;
       const code = match[1].toUpperCase();
@@ -1062,13 +1081,15 @@ export default function App() {
               isSingleDiePhase={isSingleDiePhase} endTurnOverride={wrappedEndTurn}
               dieSize={dieSize}
             />
-            <BoardContent
-              isLandscape={true} boardAnimatedStyle={boardAnimatedStyle}
-              showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
-              boardWidth={boardWidth}
-              dieSize={dieSize}
-              onPointPressOverride={wrappedPointPress}
-            />
+            <View style={{ width: boardWidth, alignSelf: 'center' }}>
+              <BoardContent
+                isLandscape={true} boardAnimatedStyle={boardAnimatedStyle}
+                showEatFlash={showEatFlash} lastThrowVelocity={lastThrowVelocity}
+                boardWidth={boardWidth}
+                dieSize={dieSize}
+                onPointPressOverride={wrappedPointPress}
+              />
+            </View>
             <CenteredDiceBar
               playerSign={-1}
               getStatusText={getStatusText} handleRoll={handleRoll}
@@ -1165,7 +1186,6 @@ const styles = StyleSheet.create({
   status: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '600', fontStyle: 'italic' },
   mainContent: { flex: 1, justifyContent: 'center', paddingHorizontal: 4 },
   boardWrapper: { width: '100%', position: 'relative' },
-  boardWrapperLandscape: { width: '92%', aspectRatio: 1.5, alignSelf: 'center' },
   borneContainerBottom: { position: 'absolute', bottom: -35, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4, zIndex: 10 },
   borneBadge: { width: 26, height: 26, borderRadius: 6, justifyContent: 'center', alignItems: 'center', borderWidth: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 3, elevation: 5 },
   borneWhite: { backgroundColor: '#FFFFFF', borderColor: '#CCC' },
@@ -1182,7 +1202,7 @@ const styles = StyleSheet.create({
   // Landscape Styles
   landscapeHeader: { paddingHorizontal: 20, paddingTop: 10, flexDirection: 'row', justifyContent: 'space-between' },
   landscapeRow: { flex: 1, flexDirection: 'row', paddingHorizontal: 10 },
-  sidebar: { width: '18%', justifyContent: 'flex-start', paddingTop: 20 },
+  sidebar: { width: '18%', maxWidth: 180, justifyContent: 'flex-start', paddingTop: 20 },
   sidebarContent: { gap: 15, alignItems: 'center' },
   sidebarPlayerCard: { width: '90%', padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   activePlayerCard: { borderColor: '#FFD700', backgroundColor: 'rgba(255,215,0,0.05)' },
@@ -1205,8 +1225,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderWidth: 1,
+    // Stable bar height (matches the landscape chrome budget in App()) so the
+    // board doesn't shift as the DicePanel transitions between states.
+    minHeight: 96,
   },
   centeredDiceBarWhite: {
     borderColor: 'rgba(255,255,255,0.25)',

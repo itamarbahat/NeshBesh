@@ -22,6 +22,13 @@ import { isFirebaseConfigured } from '../config/firebase';
 
 const QR_PREFIX = 'NESHBESH:';
 
+// Desktop web: cap the content column so the form doesn't stretch across wide
+// browser windows. Null on native — phone/iPad layout stays byte-identical.
+const webLobbyFrame =
+  Platform.OS === 'web'
+    ? ({ width: '100%', maxWidth: 560, alignSelf: 'center' } as const)
+    : null;
+
 export const LobbyScreen: React.FC = () => {
   const {
     lobbyState, playerName, opponentName, roomId, role,
@@ -138,7 +145,7 @@ export const LobbyScreen: React.FC = () => {
     return (
       <SafeAreaView style={s.safe}>
         <StatusBar style="light" />
-        <View style={s.scannerContainer}>
+        <View style={[s.scannerContainer, webLobbyFrame]}>
           <CameraView
             style={StyleSheet.absoluteFillObject}
             facing="back"
@@ -162,7 +169,7 @@ export const LobbyScreen: React.FC = () => {
     <SafeAreaView style={s.safe}>
       <StatusBar style="light" />
       <KeyboardAvoidingView
-        style={s.container}
+        style={[s.container, webLobbyFrame]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Logo */}
