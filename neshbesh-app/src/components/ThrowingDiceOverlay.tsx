@@ -331,9 +331,10 @@ export const ThrowingDiceOverlay: React.FC<{
     cancelTick();
   }, []);
 
-  // Nothing to show
-  if (!animating && !landedDice) return null;
-
+  // The wrapper stays mounted even with nothing to show (children below are
+  // already gated on `animating` / `landedDice`): onLayout must populate
+  // layoutRef BEFORE the first throw, otherwise the simulation falls back to
+  // window dimensions and the dice land outside the board frame.
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none" onLayout={onLayout}>
       {animating && diceAnims.map((anim, i) => (
