@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "REPLACE_TEAM_ID.com.anonymous.neshbeshapp",
+        "appID": "REPLACE_TEAM_ID.com.neshbesh.app",
         "paths": ["/join/*"]
       }
     ]

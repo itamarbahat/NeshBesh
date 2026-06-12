@@ -309,7 +309,7 @@ NeshBesh/
 - Hebrew UI for special roll interactions
 - 5-agent AI development system with domain separation
 - **Remote two-device multiplayer** via Firebase Realtime Database (host-authoritative)
-- **Deep-link invites** (`https://neshbesh.app/join/{code}` and `neshbesh://join/{code}`) — share via WhatsApp / SMS / email; tapping opens the app and auto-joins
+- **Deep-link invites** (`https://nesh-besh.vercel.app/join/{code}` and `neshbesh://join/{code}`) — share via WhatsApp / SMS / email; tapping opens the app (or the playable web game when the app isn't installed) and auto-joins
 - **Two distinct UI modes:**
   - **Local hotseat** — mirrored layout (top player rotated 180°)
   - **Remote two-device** — non-mirrored layout, controls anchored at the bottom, opponent shown only as a status chip at the top

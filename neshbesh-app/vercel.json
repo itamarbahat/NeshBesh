@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "cleanUrls": false,
   "rewrites": [
-    { "source": "/join/:code", "destination": "/join/index.html" }
+    { "source": "/join/:code", "destination": "/index.html" }
   ],
   "headers": [
     {

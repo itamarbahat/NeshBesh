@@ -21,7 +21,7 @@ console.log("💡 Tip: Paste this error in our chat with '@Debugger' to trigger 
 
 // ── Sanity check: getShareUrl returns the canonical join URL ────────────────
 const sampleId = 'AB12CD';
-const expected = `https://neshbesh.app/join/${sampleId}`;
+const expected = `https://nesh-besh.vercel.app/join/${sampleId}`;
 const actual = getShareUrl(sampleId);
 if (actual !== expected) {
   console.error(`❌ getShareUrl assertion failed: expected ${expected}, got ${actual}`);

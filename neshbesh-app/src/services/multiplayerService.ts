@@ -24,7 +24,9 @@ function notifyLocal(roomId: string) {
 // Single source of truth: changing the host here updates share links, deep
 // link parsing, and any future invite surface. Paired with `app.json`'s
 // `scheme: "neshbesh"` and the `/join` intent filter / associated domain.
-export const SHARE_URL_BASE = 'https://neshbesh.app/join';
+// Host = the live Vercel deployment; if a custom domain is ever connected,
+// update here + app.json (intent filter / associatedDomains) + scripts/debug.ts.
+export const SHARE_URL_BASE = 'https://nesh-besh.vercel.app/join';
 
 // ── Build a shareable join URL for a room ───────────────────────────────────
 export const getShareUrl = (roomId: string): string => {

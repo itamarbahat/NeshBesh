@@ -61,10 +61,11 @@
 *   Local hotseat rendering must remain byte-equivalent — never edit `PlayerDiceBar` / `PlayerSidebar` while working on remote layout.
 
 ### Multiplayer Sync
-*   **Deep links** — `https://neshbesh.app/join/{code}` (universal link) and `neshbesh://join/{code}` (custom scheme). Parsed at App level via `expo-linking`, stashed as `pendingJoinCode` on the multiplayer store, consumed by lobby (auto-join if `playerName` set, else prefill the manual code field).
+*   **Deep links** — `https://nesh-besh.vercel.app/join/{code}` (universal link, opens the playable web app in the browser when the native app isn't installed) and `neshbesh://join/{code}` (custom scheme). Parsed at App level via `expo-linking`, stashed as `pendingJoinCode` on the multiplayer store, consumed by lobby (auto-join if `playerName` set, else prefill the manual code field).
 *   **Manual code entry** is the primary in-app join path; QR scan is preserved but demoted behind a `אפשרויות הצטרפות נוספות ▾` disclosure.
 *   **Host-authoritative** — guest actions go through `sendGuestAction`; the host runs all engine mutations and pushes state via `syncGameState`.
 *   **Share helper** — `getShareUrl(roomId)` in `multiplayerService.ts` is the single source of the canonical join URL.
+*   **Future custom domain** — to move off the Vercel host: change `SHARE_URL_BASE` (multiplayerService.ts), the `https` intent-filter host + `associatedDomains` in `app.json` (needs EAS rebuild), the literal in `scripts/debug.ts`, and serve `public/.well-known/` on the new domain (fill the AASA `REPLACE_TEAM_ID` placeholder when an iOS native build ships).
 
 ### Animation & Visuals
 *   **Animations**: Built using **Reanimated / Moti**. Distinct visual animations for "Eating" a piece and "Table Flip".
