@@ -14,12 +14,12 @@ export const LANDING_POP_SCALE: number = 1.25;
 export const LANDING_POP_MS: number = 180;
 
 // Roll duration is randomized per throw so the dice never feel mechanical.
-// Capped at 3000 ms: physics tuning targets the 99th-percentile settle time
-// at or below this value; the trajectory simulator hard-snaps to a legal
-// in-board rest pose if any die is still moving when this cap elapses.
-export const ROLL_DURATION_MIN_MS: number = 1000;
-export const ROLL_DURATION_MAX_MS: number = 3000;
-export const ROLL_HARD_CAP_MS: number = 3000;
+// Capped at 1500 ms (halved from the original 3000 ms tuning for a snappier
+// landing): the trajectory simulator hard-snaps to a legal in-board rest pose
+// if any die is still moving when this cap elapses.
+export const ROLL_DURATION_MIN_MS: number = 500;
+export const ROLL_DURATION_MAX_MS: number = 1500;
+export const ROLL_HARD_CAP_MS: number = 1500;
 
 // ── Physics tuning ──────────────────────────────────────────────────────────
 // Restitution = elastic energy retained on a bounce (1 = perfect bounce,

@@ -7,8 +7,12 @@ export interface RoomData {
   guest: { name: string; initialDie: number | null } | null;
   gameStarted: boolean;
   gameState: Record<string, any> | null;
-  pendingAction: { type: string; payload?: any } | null;
+  pendingAction: { type: string; payload?: any; seq?: number } | null;
   createdAt: number;
+  // Monotonic counter bumped once per new game in a tournament. Used as a
+  // stable rematch signal: it lives outside `gameState` (which the host
+  // overwrites on every debounced sync), so an increment can't be clobbered.
+  round: number;
 }
 
 // ── In-memory store for local/offline mode ──────────────────────────────────
@@ -60,6 +64,7 @@ export const createRoom = async (roomId: string, hostName: string): Promise<void
     gameState: null,
     pendingAction: null,
     createdAt: Date.now(),
+    round: 0,
   };
 
   if (!isFirebaseConfigured || !db) {
@@ -148,6 +153,20 @@ export const clearInitialDice = async (roomId: string): Promise<void> => {
   await update(ref(db, `rooms/${roomId}/guest`), { initialDie: null });
 };
 
+// ── Bump the round counter (host, on rematch / next game) ───────────────────
+export const setRound = async (roomId: string, round: number): Promise<void> => {
+  if (!isFirebaseConfigured || !db) {
+    const room = localRooms.get(roomId);
+    if (room) {
+      room.round = round;
+      notifyLocal(roomId);
+    }
+    return;
+  }
+
+  await update(ref(db, `rooms/${roomId}`), { round });
+};
+
 // ── Sync full game state from host ──────────────────────────────────────────
 export const syncGameState = async (
   roomId: string,
@@ -158,12 +177,17 @@ export const syncGameState = async (
     if (room) {
       room.gameState = gameState;
       room.gameStarted = true;
+      room.pendingAction = null;
       notifyLocal(roomId);
     }
     return;
   }
 
-  await update(ref(db, `rooms/${roomId}`), { gameState, gameStarted: true });
+  // Fold the pending-action clear into the same write the host already makes on
+  // every state change — this removes the separate per-action clear round-trip.
+  // Guest actions carry a monotonic `seq` so the host can still dedupe them
+  // (see subscribeToActions consumer) without relying on an immediate clear.
+  await update(ref(db, `rooms/${roomId}`), { gameState, gameStarted: true, pendingAction: null });
 };
 
 // ── Subscribe to game state (guest) ─────────────────────────────────────────
@@ -190,22 +214,30 @@ export const sendGuestAction = async (
   roomId: string,
   action: { type: string; payload?: any },
 ): Promise<void> => {
+  // Stamp a monotonic sequence so the host always sees a value change even for
+  // two identical consecutive actions (Firebase's onValue does not fire when a
+  // value is rewritten identically), and so the host can dedupe / ignore stale
+  // actions after a reconnect. `Date.now()` from the GUEST's clock keeps this
+  // monotonic on the sender side (the host only ever compares guest-sourced
+  // seqs to each other, so cross-device clock skew is irrelevant).
+  const stamped = { ...action, seq: Date.now() };
+
   if (!isFirebaseConfigured || !db) {
     const room = localRooms.get(roomId);
     if (room) {
-      room.pendingAction = action;
+      room.pendingAction = stamped;
       notifyLocal(roomId);
     }
     return;
   }
 
-  await update(ref(db, `rooms/${roomId}`), { pendingAction: action });
+  await update(ref(db, `rooms/${roomId}`), { pendingAction: stamped });
 };
 
 // ── Subscribe to pending actions (host) ─────────────────────────────────────
 export const subscribeToActions = (
   roomId: string,
-  callback: (action: { type: string; payload?: any } | null) => void,
+  callback: (action: { type: string; payload?: any; seq?: number } | null) => void,
 ): Unsubscribe => {
   if (!isFirebaseConfigured || !db) {
     if (!localListeners.has(roomId)) localListeners.set(roomId, new Set());

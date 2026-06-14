@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import {
   generateRoomCode, createRoom, joinRoom, subscribeToRoom,
-  setInitialDie, clearInitialDice, RoomData,
+  setInitialDie, clearInitialDice, setRound, sendGuestAction, RoomData,
 } from '../services/multiplayerService';
 import { Unsubscribe } from 'firebase/database';
 import { rollDie } from '../engine';
+import { useGameStore } from './useGameStore';
 
 export type LobbyScreen = 'lobby' | 'initialRoll' | 'game';
 export type LobbyState = 'IDLE' | 'HOSTING' | 'JOINING' | 'CONNECTED' | 'INITIAL_ROLL';
@@ -27,6 +28,10 @@ export interface MultiplayerState {
   myDie: number | null;
   opponentDie: number | null;
 
+  // Tournament round counter, mirrored from room data. Bumped on each new game
+  // so both devices return to the opening die-roll for the next game.
+  round: number;
+
   // Pending deep-link join (set by App-level URL listener, consumed by lobby)
   pendingJoinCode: string | null;
 
@@ -41,6 +46,8 @@ export interface MultiplayerState {
   rollMyDie: () => Promise<void>;
   startLocalGame: () => void;
   goToGame: () => void;
+  requestRematch: (fullReset?: boolean) => void;
+  startRemoteRematch: (fullReset?: boolean) => Promise<void>;
   resetToLobby: () => void;
   cleanup: () => void;
 }
@@ -56,6 +63,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
   gameMode: 'local',
   myDie: null,
   opponentDie: null,
+  round: 0,
   pendingJoinCode: null,
   _unsubRoom: null,
 
@@ -68,12 +76,32 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
     if (!playerName.trim()) return;
 
     const roomId = generateRoomCode();
-    await createRoom(roomId, playerName.trim());
+    try {
+      await createRoom(roomId, playerName.trim());
+    } catch (err) {
+      // Most common cause: Realtime Database security rules deny writes (DB
+      // created in "locked mode"). Surface it instead of silently doing
+      // nothing — the lobby catches this and shows an alert.
+      console.error('[multiplayer] createRoom failed:', err);
+      throw new Error('ROOM_CREATE_FAILED');
+    }
 
     // Subscribe to room changes
     const unsub = subscribeToRoom(roomId, (data: RoomData | null) => {
       if (!data) return;
       const s = get();
+
+      // Rematch signal: round bumped → return to the opening die-roll for the
+      // next game. (No-op for the device that initiated it — its round already
+      // matches.)
+      if ((data.round ?? 0) > s.round) {
+        useGameStore.getState().startNextGame();
+        set({
+          myDie: null, opponentDie: null, round: data.round ?? 0,
+          screen: 'initialRoll', lobbyState: 'INITIAL_ROLL',
+        });
+        return;
+      }
 
       // Guest joined
       if (data.guest && s.lobbyState === 'HOSTING') {
@@ -100,13 +128,32 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
     const { playerName } = get();
     if (!playerName.trim()) return false;
 
-    const success = await joinRoom(roomId, playerName.trim());
+    let success: boolean;
+    try {
+      success = await joinRoom(roomId, playerName.trim());
+    } catch (err) {
+      // Network / locked-rules failure — distinct from "room not found".
+      console.error('[multiplayer] joinRoom failed:', err);
+      throw new Error('ROOM_JOIN_FAILED');
+    }
     if (!success) return false;
 
     // Subscribe to room changes
     const unsub = subscribeToRoom(roomId, (data: RoomData | null) => {
       if (!data) return;
       const s = get();
+
+      // Rematch signal: round bumped → return to the opening die-roll for the
+      // next game. (No-op for the device that initiated it — its round already
+      // matches.)
+      if ((data.round ?? 0) > s.round) {
+        useGameStore.getState().startNextGame();
+        set({
+          myDie: null, opponentDie: null, round: data.round ?? 0,
+          screen: 'initialRoll', lobbyState: 'INITIAL_ROLL',
+        });
+        return;
+      }
 
       // Read host name
       if (data.host && !s.opponentName) {
@@ -126,11 +173,6 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       isMultiplayer: true,
       gameMode: 'remote',
       _unsubRoom: unsub,
-    });
-
-    // Read host name immediately
-    subscribeToRoom(roomId, (data) => {
-      if (data?.host) set({ opponentName: data.host.name });
     });
 
     return true;
@@ -160,6 +202,40 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
     set({ screen: 'initialRoll', lobbyState: 'INITIAL_ROLL' });
   },
 
+  // Entry point from the GAME_OVER overlay. The host runs the authoritative
+  // rematch directly; the guest asks the host to run it (host processes the
+  // REQUEST_REMATCH action and bumps the round, which both devices observe).
+  requestRematch: (fullReset = false) => {
+    const { role, roomId } = get();
+    if (role === 'host') {
+      get().startRemoteRematch(fullReset);
+    } else if (roomId) {
+      sendGuestAction(roomId, { type: fullReset ? 'REQUEST_NEW_CHAMPIONSHIP' : 'REQUEST_REMATCH' });
+    }
+  },
+
+  // Host-authoritative rematch: reset the engine (keeping or clearing the score
+  // for next-game vs. new-championship), clear the stale opening dice, then bump
+  // the round counter so the guest's room subscription mirrors the transition.
+  // Order matters: dice are cleared BEFORE the round bump so the guest never
+  // reads a stale opening die when it returns to the initial-roll screen.
+  startRemoteRematch: async (fullReset = false) => {
+    const { roomId, round } = get();
+    if (!roomId) return;
+
+    if (fullReset) useGameStore.getState().startNewGame();
+    else useGameStore.getState().startNextGame();
+
+    const newRound = round + 1;
+    await clearInitialDice(roomId);
+    await setRound(roomId, newRound);
+
+    set({
+      myDie: null, opponentDie: null, round: newRound,
+      screen: 'initialRoll', lobbyState: 'INITIAL_ROLL',
+    });
+  },
+
   resetToLobby: () => {
     const { _unsubRoom, roomId, role } = get();
     if (_unsubRoom) _unsubRoom();
@@ -175,6 +251,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => ({
       gameMode: 'local',
       myDie: null,
       opponentDie: null,
+      round: 0,
       pendingJoinCode: null,
       _unsubRoom: null,
     });

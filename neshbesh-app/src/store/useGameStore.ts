@@ -7,7 +7,7 @@ import {
   hasBarPieces, canBearOff, hasAnyMove,
   calculatePossibleMoves, getDiceAfterMove, applyMove,
   applyNeshStrike, getFreeMoveFinals, calculateVictory,
-  isBarEntryBlocked, resetMoveCache, canFullyCompleteDouble,
+  isBarEntryBlocked, isBarFullyBlocked, resetMoveCache, canFullyCompleteDouble,
   BEAR_OFF_WHITE, BEAR_OFF_BLACK,
 } from '../engine';
 
@@ -112,6 +112,7 @@ export interface NeshBeshState {
   confirmSpecialResult: () => void;
   endTurn: () => void;
   startNewGame: () => void;
+  startNextGame: () => void;
   startWithDice: (firstPlayer: PlayerSign, d1: number, d2: number) => void;
 }
 
@@ -135,18 +136,6 @@ const resetTurnState = (player: PlayerSign) => ({
   blockedDoubleStreak: 0,
   message: null as string | null,
 });
-
-// Module-scope handle for the blocked-double auto-reroll timer. Stored outside
-// Zustand state so we can cancel a pending auto-roll the instant any fresh
-// `rollDice` invocation arrives — eliminating the rare race where a manual
-// mid-cooldown roll could cause two re-rolls to chain off the same cooldown.
-let _autoRollTimeout: ReturnType<typeof setTimeout> | null = null;
-const cancelPendingAutoRoll = () => {
-  if (_autoRollTimeout !== null) {
-    clearTimeout(_autoRollTimeout);
-    _autoRollTimeout = null;
-  }
-};
 
 // Module-scope handle for special-roll message auto-clear timer (5:2 / 4:3).
 // Stored outside Zustand state so we can cancel an in-flight clear when the
@@ -175,11 +164,25 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
   const endTurnImpl = () => {
     const { currentPlayer, score, board, whiteBorneOff, blackBorneOff } = get();
-    cancelPendingAutoRoll();
     cancelPendingMessageClear();
     resetMoveCache();
+    const next = (-currentPlayer) as PlayerSign;
+    // US-010: if the opponent is on the Bar and EVERY entry point is blocked,
+    // they have nothing to roll for — the turn stays with the player who just
+    // moved until one of their points opens up. The check re-runs each time
+    // this player ends a turn, so the bar player gets their turn the moment an
+    // entry point frees up. (All other rules then apply as normal.)
+    if (hasBarPieces(board, next) && isBarFullyBlocked(board, next)) {
+      set({
+        ...resetTurnState(currentPlayer),
+        doublesCount: 0,
+        score, board, whiteBorneOff, blackBorneOff,
+        message: 'היריב על הבר וכל הכניסות חסומות — התור נשאר אצלך',
+      });
+      return;
+    }
     set({
-      ...resetTurnState((-currentPlayer) as PlayerSign),
+      ...resetTurnState(next),
       doublesCount: 0,
       score, board, whiteBorneOff, blackBorneOff,
     });
@@ -346,11 +349,6 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
 
     // ── rollDice ──────────────────────────────────────────────────────────────
     rollDice: () => {
-      // Cancel any pending blocked-double auto-reroll first. Whether this call
-      // is manual or itself an auto-fire, the previous timer is now obsolete —
-      // its result would be either redundant (we are about to roll fresh) or
-      // would chain a second re-roll off the same cooldown.
-      cancelPendingAutoRoll();
       const { phase, doublesCount, currentPlayer: sign, board } = get();
       if (phase !== 'WAITING_ROLL' && phase !== 'SPECIAL_63_CHOICE') return;
 
@@ -372,24 +370,14 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
             });
             return;
           }
+          // Stay in WAITING_ROLL and let the player roll again themselves
+          // (no auto re-roll): we surface a "blocked, roll again" message and
+          // the dice become tappable exactly like any other turn.
           set({
             dice: [d1, d2], blockedDoubleStreak: newStreak,
             phase: 'WAITING_ROLL', availableDice: [],
-            message: `דאבל ${d1} — כניסה חסומה, מתגלגל מחדש…`,
+            message: `דאבל ${d1} — הכניסה חסומה, גלגל שוב`,
           });
-          // Auto re-roll after a brief pause so the blocked message is visible.
-          // The handle is module-scope so any fresh rollDice() (manual OR a
-          // chained auto-roll) cancels this pending fire. Belt-and-braces
-          // snapshot check on phase + dice handles the case where the player
-          // navigated away between schedule and fire.
-          const snap0 = d1, snap1 = d2;
-          _autoRollTimeout = setTimeout(() => {
-            _autoRollTimeout = null;
-            const { phase: p, dice: cur } = get();
-            if (p !== 'WAITING_ROLL') return;
-            if (!cur || cur[0] !== snap0 || cur[1] !== snap1) return;
-            get().rollDice();
-          }, 1200);
           return;
         }
 
@@ -766,7 +754,6 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         return;
       }
       const { board, currentPlayer, score, whiteBorneOff, blackBorneOff } = get();
-      cancelPendingAutoRoll();
       cancelPendingMessageClear();
       resetMoveCache();
 
@@ -818,6 +805,26 @@ export const useGameStore = create<NeshBeshState>((set, get) => {
         blackBorneOff: 0,
         doublesCount: 0,
         score: initialScore,
+        victoryInfo: null,
+        openingWhiteDie: null,
+        openingBlackDie: null,
+        ...resetTurnState(1),
+        phase: 'INITIAL_ROLL',
+      });
+    },
+
+    // ── startNextGame ─────────────────────────────────────────────────────────
+    // Reset the board for the next game within a tournament, PRESERVING the
+    // running score. Phase returns to INITIAL_ROLL so the opening die-roll
+    // (single die per player) determines who starts the next game.
+    startNextGame: () => {
+      const { score } = get();
+      set({
+        board: generateInitialBoard(),
+        whiteBorneOff: 0,
+        blackBorneOff: 0,
+        doublesCount: 0,
+        score,
         victoryInfo: null,
         openingWhiteDie: null,
         openingBlackDie: null,

@@ -21,7 +21,7 @@ import { useGameStore, currentPlayerHasLegalMoves } from './src/store/useGameSto
 import { useMultiplayerStore } from './src/store/useMultiplayerStore';
 import { LobbyScreen } from './src/screens/LobbyScreen';
 import {
-  syncGameState, subscribeToActions, clearPendingAction,
+  syncGameState, subscribeToActions,
   subscribeToGameState, sendGuestAction, clearInitialDice,
 } from './src/services/multiplayerService';
 import { Board, BOARD_ASPECT } from './src/components/Board';
@@ -788,6 +788,11 @@ export default function App() {
 
   // ── Multiplayer sync: host pushes state, processes guest actions ─────────
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Highest guest-action seq the host has already processed. Guards against
+  // reprocessing a stale pendingAction (e.g. on listener re-subscribe) now that
+  // the clear is folded into the debounced state sync instead of an immediate
+  // per-action write.
+  const lastActionSeqRef = useRef(0);
 
   // Host: sync game state to Firebase on every relevant change
   useEffect(() => {
@@ -834,8 +839,12 @@ export default function App() {
 
     const unsub = subscribeToActions(mpRoomId, async (action) => {
       if (!action) return;
+      // Dedupe: ignore an action we've already applied (lingering value seen
+      // again after a re-subscribe). Each guest action carries a monotonic seq.
+      if (action.seq != null && action.seq <= lastActionSeqRef.current) return;
+      if (action.seq != null) lastActionSeqRef.current = action.seq;
       const gs = useGameStore.getState();
-      
+
       switch (action.type) {
         case 'ROLL_DICE':
           gs.rollDice();
@@ -861,9 +870,16 @@ export default function App() {
         case 'CONFIRM_SPECIAL':
           gs.confirmSpecialResult();
           break;
+        case 'REQUEST_REMATCH':
+          await useMultiplayerStore.getState().startRemoteRematch(false);
+          break;
+        case 'REQUEST_NEW_CHAMPIONSHIP':
+          await useMultiplayerStore.getState().startRemoteRematch(true);
+          break;
       }
-
-      await clearPendingAction(mpRoomId);
+      // No explicit clear here: the host's debounced state sync writes
+      // pendingAction:null alongside the new game state (single round-trip),
+      // and the seq guard above prevents any stale re-fire in the meantime.
     });
 
     return () => unsub();

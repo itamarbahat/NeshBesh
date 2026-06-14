@@ -3,7 +3,6 @@ import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MotiView } from 'moti';
 import { useGameStore } from '../store/useGameStore';
 import { useMultiplayerStore } from '../store/useMultiplayerStore';
-import { generateInitialBoard } from '../engine';
 
 /**
  * Modal overlay for special states that genuinely block the game:
@@ -25,6 +24,8 @@ export const SpecialRollOverlay: React.FC = () => {
   const currentPlayer = useGameStore((s) => s.currentPlayer);
   const confirmTableFlip = useGameStore((s) => s.confirmTableFlip);
   const startNewGame = useGameStore((s) => s.startNewGame);
+  const startNextGameLocal = useGameStore((s) => s.startNextGame);
+  const requestRematch = useMultiplayerStore((s) => s.requestRematch);
   // Local hotseat recolours/mirrors the board on flip; remote (fixed colour per
   // device) just passes the turn — see confirmTableFlip in useGameStore.
   const gameMode = useMultiplayerStore((s) => s.gameMode);
@@ -38,33 +39,19 @@ export const SpecialRollOverlay: React.FC = () => {
   // Mirror card toward the active player: White (top) reads inverted.
   const mirroredCardStyle = currentPlayer === 1 ? { transform: [{ rotate: '180deg' as const }] } : undefined;
 
+  const isRemote = gameMode === 'remote';
+
+  // Each new game within the tournament re-runs the opening roll. In remote
+  // mode this is host-authoritative and synced (both devices return to the
+  // single-die starter screen); in local hotseat it resets the engine directly.
   const startNextGame = () => {
-    // Each new game within the tournament re-runs the opening roll.
-    useGameStore.setState({
-      board: generateInitialBoard(),
-      whiteBorneOff: 0,
-      blackBorneOff: 0,
-      victoryInfo: null,
-      currentPlayer: 1,
-      phase: 'INITIAL_ROLL',
-      dice: null,
-      availableDice: [],
-      openingWhiteDie: null,
-      openingBlackDie: null,
-      doublesCount: 0,
-      extraTurn: false,
-      backward: false,
-      pending52Flip: false,
-      selectedIndex: null,
-      intermediateHighlights: [],
-      finalHighlights: [],
-      moveLocked: false,
-      neshStrikeFreeMovesLeft: 0,
-      neshStrikeStartedOnBar: false,
-      is51FourMove: false,
-      blockedDoubleStreak: 0,
-      message: null,
-    });
+    if (isRemote) requestRematch(false);
+    else startNextGameLocal();
+  };
+
+  const newChampionship = () => {
+    if (isRemote) requestRematch(true);
+    else startNewGame();
   };
 
   const championship = score.whiteSets >= 3 || score.blackSets >= 3;
@@ -110,7 +97,7 @@ export const SpecialRollOverlay: React.FC = () => {
                 </Text>
               </View>
               {championship ? (
-                <Btn label="New Championship" onPress={startNewGame} />
+                <Btn label="New Championship" onPress={newChampionship} />
               ) : (
                 <Btn label="Next Game" onPress={startNextGame} />
               )}

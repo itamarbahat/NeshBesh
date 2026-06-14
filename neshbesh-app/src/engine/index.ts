@@ -71,6 +71,16 @@ export const isBarEntryBlocked = (
   return Math.sign(board[target]) === -sign && Math.abs(board[target]) >= 2;
 };
 
+// True iff EVERY possible bar-entry point (die values 1..6) is blocked, i.e. a
+// player on the Bar has no legal entry whatsoever. While this holds, the bar
+// player gets no turn — it stays with the opponent until a point opens up.
+export const isBarFullyBlocked = (board: number[], sign: PlayerSign): boolean => {
+  for (let d = 1; d <= 6; d++) {
+    if (!isBarEntryBlocked(board, sign, d)) return false;
+  }
+  return true;
+};
+
 const isLandable = (board: number[], idx: number, sign: PlayerSign): boolean => {
   const c = board[idx];
   return Math.sign(c) !== -sign || Math.abs(c) <= 1;
