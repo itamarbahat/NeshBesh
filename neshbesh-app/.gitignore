@@ -32,6 +32,10 @@ yarn-error.*
 
 # local env files
 .env*.local
+# Firebase credentials for local dev (EXPO_PUBLIC_* are public, but keep the
+# local file out of git — values live in Vercel for the deploy). .env.example
+# is committed as the template.
+.env
 
 # typescript
 *.tsbuildinfo

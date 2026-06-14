@@ -49,7 +49,14 @@ export const LobbyScreen: React.FC = () => {
       Alert.alert('שם חסר', 'הזן את שמך לפני יצירת חדר');
       return;
     }
-    await hostRoom();
+    try {
+      await hostRoom();
+    } catch {
+      Alert.alert(
+        'יצירת החדר נכשלה',
+        'לא ניתן ליצור חדר. ודא חיבור לאינטרנט ושכללי ה-Database ב-Firebase מאפשרים גישה ל-rooms.',
+      );
+    }
   };
 
   const handleStartScanning = async () => {
@@ -77,12 +84,17 @@ export const LobbyScreen: React.FC = () => {
       code = data.substring(QR_PREFIX.length);
     }
 
-    const success = await joinExistingRoom(code.trim().toUpperCase());
-    if (!success) {
-      Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+    try {
+      const success = await joinExistingRoom(code.trim().toUpperCase());
+      if (!success) {
+        Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+        setScanned(false);
+      } else {
+        setScanning(false);
+      }
+    } catch {
+      Alert.alert('ההצטרפות נכשלה', 'בעיית חיבור או הרשאות מול Firebase.');
       setScanned(false);
-    } else {
-      setScanning(false);
     }
   }, [scanned, joinExistingRoom]);
 
@@ -96,10 +108,15 @@ export const LobbyScreen: React.FC = () => {
     if (playerName.trim()) {
       // Name already set — auto-join immediately
       (async () => {
-        const ok = await joinExistingRoom(pendingJoinCode);
-        setPendingJoinCode(null);
-        if (!ok) {
-          Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+        try {
+          const ok = await joinExistingRoom(pendingJoinCode);
+          setPendingJoinCode(null);
+          if (!ok) {
+            Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+          }
+        } catch {
+          setPendingJoinCode(null);
+          Alert.alert('ההצטרפות נכשלה', 'בעיית חיבור או הרשאות מול Firebase.');
         }
       })();
     } else {
@@ -119,11 +136,18 @@ export const LobbyScreen: React.FC = () => {
       Alert.alert('קוד לא תקין', 'הזן קוד חדר בן 6 תווים');
       return;
     }
-    const ok = await joinExistingRoom(code);
-    if (!ok) {
-      Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
-    } else {
-      setPendingJoinCode(null);
+    try {
+      const ok = await joinExistingRoom(code);
+      if (!ok) {
+        Alert.alert('שגיאה', 'לא נמצא חדר עם הקוד הזה, או שהחדר מלא');
+      } else {
+        setPendingJoinCode(null);
+      }
+    } catch {
+      Alert.alert(
+        'ההצטרפות נכשלה',
+        'בעיית חיבור או הרשאות. ודא חיבור לאינטרנט ושכללי ה-Database ב-Firebase מאפשרים גישה ל-rooms.',
+      );
     }
   }, [playerName, joinCodeInput, joinExistingRoom, setPendingJoinCode]);
 

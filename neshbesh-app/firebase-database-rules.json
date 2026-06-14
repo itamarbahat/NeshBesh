@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "rooms": {
+      ".read": false,
+      ".write": false,
+      "$roomId": {
+        ".read": true,
+        ".write": true,
+        ".indexOn": ["createdAt"]
+      }
+    }
+  }
+}
